@@ -25,6 +25,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -40,7 +41,7 @@ import (
 
 const (
 	garageFinalizer = "garage.deuxfleurs.fr/finalizer"
-	garageImage     = "dxflrs/garage:v1.0.0"
+	garageImage     = "dxflrs/garage:v2.1.0"
 )
 
 // GarageClusterReconciler reconciles a GarageCluster object
@@ -55,6 +56,10 @@ type GarageClusterReconciler struct {
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=core,resources=endpoints,verbs=get;list;watch
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=pods,verbs=get;list;watch
 // +kubebuilder:rbac:groups=core,resources=pods/exec,verbs=create
 
@@ -88,6 +93,13 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileConfigMap(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile ConfigMap")
 		r.updateStatus(ctx, garageCluster, "Failed", "ConfigMap reconciliation failed: "+err.Error())
+		return ctrl.Result{}, err
+	}
+
+	// Reconcile ServiceAccount and RBAC
+	if err := r.reconcileServiceAccount(ctx, garageCluster); err != nil {
+		logger.Error(err, "Failed to reconcile ServiceAccount")
+		r.updateStatus(ctx, garageCluster, "Failed", "ServiceAccount reconciliation failed: "+err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -157,10 +169,15 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 }
 
 func (r *GarageClusterReconciler) reconcileConfigMap(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
-	rpcSecret := gc.Spec.RPCSecret
-	if rpcSecret == "" {
-		rpcSecret = generateSecret(32)
+	// Generate and persist RPC secret if not set
+	if gc.Spec.RPCSecret == "" {
+		gc.Spec.RPCSecret = generateSecret(32)
+		if err := r.Update(ctx, gc); err != nil {
+			return err
+		}
 	}
+	
+	rpcSecret := gc.Spec.RPCSecret
 
 	region := "garage"
 	if gc.Spec.S3Api != nil && gc.Spec.S3Api.Region != "" {
@@ -172,13 +189,23 @@ func (r *GarageClusterReconciler) reconcileConfigMap(ctx context.Context, gc *ga
 		rootDomain = gc.Spec.S3Api.RootDomain
 	}
 
-	configData := fmt.Sprintf(`metadata_dir = "/mnt/meta"
+	// Create a ConfigMap for each pod in the StatefulSet
+	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+		podName := fmt.Sprintf("%s-%d", gc.Name, i)
+		rpcPublicAddr := fmt.Sprintf("%s.%s.%s.svc.cluster.local:3901", podName, gc.Name, gc.Namespace)
+
+		// Map old replication_mode to new replication_factor
+		// "1" -> 1, "2" -> 2, "3" -> 3
+		replicationFactor := gc.Spec.ReplicationMode
+
+		configData := fmt.Sprintf(`metadata_dir = "/mnt/meta"
 data_dir = "/mnt/data"
 db_engine = "sqlite"
-replication_mode = "%s"
+replication_factor = %s
+consistency_mode = "consistent"
 
 rpc_bind_addr = "[::]:3901"
-rpc_public_addr = "{{ env "GARAGE_RPC_PUBLIC_ADDR" }}:3901"
+rpc_public_addr = "%s"
 rpc_secret = "%s"
 
 [kubernetes_discovery]
@@ -192,32 +219,39 @@ root_domain = "%s"
 
 [admin]
 api_bind_addr = "[::]:3903"
-`, gc.Spec.ReplicationMode, rpcSecret, gc.Name, gc.Namespace, region, rootDomain)
+`, replicationFactor, rpcPublicAddr, rpcSecret, gc.Name, gc.Namespace, region, rootDomain)
 
-	cm := &corev1.ConfigMap{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      gc.Name + "-config",
-			Namespace: gc.Namespace,
-		},
-		Data: map[string]string{
-			"garage.toml": configData,
-		},
+		cm := &corev1.ConfigMap{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      fmt.Sprintf("%s-config-%d", gc.Name, i),
+				Namespace: gc.Namespace,
+			},
+			Data: map[string]string{
+				"garage.toml": configData,
+			},
+		}
+
+		if err := controllerutil.SetControllerReference(gc, cm, r.Scheme); err != nil {
+			return err
+		}
+
+		found := &corev1.ConfigMap{}
+		err := r.Get(ctx, types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, found)
+		if err != nil && errors.IsNotFound(err) {
+			if err := r.Create(ctx, cm); err != nil {
+				return err
+			}
+		} else if err != nil {
+			return err
+		} else {
+			found.Data = cm.Data
+			if err := r.Update(ctx, found); err != nil {
+				return err
+			}
+		}
 	}
 
-	if err := controllerutil.SetControllerReference(gc, cm, r.Scheme); err != nil {
-		return err
-	}
-
-	found := &corev1.ConfigMap{}
-	err := r.Get(ctx, types.NamespacedName{Name: cm.Name, Namespace: cm.Namespace}, found)
-	if err != nil && errors.IsNotFound(err) {
-		return r.Create(ctx, cm)
-	} else if err != nil {
-		return err
-	}
-
-	found.Data = cm.Data
-	return r.Update(ctx, found)
+	return nil
 }
 
 func (r *GarageClusterReconciler) reconcileService(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
@@ -248,6 +282,87 @@ func (r *GarageClusterReconciler) reconcileService(ctx context.Context, gc *gara
 	if err != nil && errors.IsNotFound(err) {
 		return r.Create(ctx, svc)
 	}
+	return err
+}
+
+func (r *GarageClusterReconciler) reconcileServiceAccount(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
+	// Create ServiceAccount
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gc.Name,
+			Namespace: gc.Namespace,
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(gc, sa, r.Scheme); err != nil {
+		return err
+	}
+
+	foundSA := &corev1.ServiceAccount{}
+	err := r.Get(ctx, types.NamespacedName{Name: sa.Name, Namespace: sa.Namespace}, foundSA)
+	if err != nil && errors.IsNotFound(err) {
+		if err := r.Create(ctx, sa); err != nil {
+			return err
+		}
+	}
+
+	// Create Role for Kubernetes discovery
+	role := &rbacv1.Role{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gc.Name + "-discovery",
+			Namespace: gc.Namespace,
+		},
+		Rules: []rbacv1.PolicyRule{
+			{
+				APIGroups: []string{""},
+				Resources: []string{"endpoints"},
+				Verbs:     []string{"get", "list", "watch"},
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(gc, role, r.Scheme); err != nil {
+		return err
+	}
+
+	foundRole := &rbacv1.Role{}
+	err = r.Get(ctx, types.NamespacedName{Name: role.Name, Namespace: role.Namespace}, foundRole)
+	if err != nil && errors.IsNotFound(err) {
+		if err := r.Create(ctx, role); err != nil {
+			return err
+		}
+	}
+
+	// Create RoleBinding
+	roleBinding := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      gc.Name + "-discovery",
+			Namespace: gc.Namespace,
+		},
+		RoleRef: rbacv1.RoleRef{
+			APIGroup: "rbac.authorization.k8s.io",
+			Kind:     "Role",
+			Name:     role.Name,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      sa.Name,
+				Namespace: gc.Namespace,
+			},
+		},
+	}
+
+	if err := controllerutil.SetControllerReference(gc, roleBinding, r.Scheme); err != nil {
+		return err
+	}
+
+	foundRB := &rbacv1.RoleBinding{}
+	err = r.Get(ctx, types.NamespacedName{Name: roleBinding.Name, Namespace: roleBinding.Namespace}, foundRB)
+	if err != nil && errors.IsNotFound(err) {
+		return r.Create(ctx, roleBinding)
+	}
+
 	return err
 }
 
@@ -289,6 +404,7 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 					Labels: map[string]string{"app": gc.Name},
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: gc.Name,
 					Affinity: &corev1.Affinity{
 						PodAntiAffinity: &corev1.PodAntiAffinity{
 							RequiredDuringSchedulingIgnoredDuringExecution: []corev1.PodAffinityTerm{
@@ -301,20 +417,26 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 							},
 						},
 					},
+					InitContainers: []corev1.Container{
+						{
+							Name:  "config-init",
+							Image: "busybox:latest",
+							Command: []string{"/bin/sh", "-c"},
+							Args: []string{
+								`ORDINAL=$(echo $HOSTNAME | sed 's/.*-//'); cp /etc/garage-configs/config-$ORDINAL/garage.toml /etc/garage.toml`,
+							},
+							VolumeMounts: []corev1.VolumeMount{
+								{Name: "config", MountPath: "/etc"},
+								{Name: "config-templates", MountPath: "/etc/garage-configs"},
+							},
+						},
+					},
 					Containers: []corev1.Container{
 						{
-							Name:  "garage",
-							Image: garageImage,
-							Env: []corev1.EnvVar{
-								{
-									Name: "GARAGE_RPC_PUBLIC_ADDR",
-									ValueFrom: &corev1.EnvVarSource{
-										FieldRef: &corev1.ObjectFieldSelector{
-											FieldPath: "status.podIP",
-										},
-									},
-								},
-							},
+							Name:    "garage",
+							Image:   garageImage,
+							Command: []string{"/garage"},
+							Args:    []string{"server"},
 							Ports: []corev1.ContainerPort{
 								{Name: "s3-api", ContainerPort: 3900},
 								{Name: "rpc", ContainerPort: 3901},
@@ -323,7 +445,11 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 							VolumeMounts: []corev1.VolumeMount{
 								{Name: "meta", MountPath: "/mnt/meta"},
 								{Name: "data", MountPath: "/mnt/data"},
-								{Name: "config", MountPath: "/etc/garage.toml", SubPath: "garage.toml"},
+								{
+									Name:      "config",
+									MountPath: "/etc/garage.toml",
+									SubPath:   "garage.toml",
+								},
 							},
 							Resources: resources,
 						},
@@ -332,10 +458,32 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 						{
 							Name: "config",
 							VolumeSource: corev1.VolumeSource{
-								ConfigMap: &corev1.ConfigMapVolumeSource{
-									LocalObjectReference: corev1.LocalObjectReference{
-										Name: gc.Name + "-config",
-									},
+								EmptyDir: &corev1.EmptyDirVolumeSource{},
+							},
+						},
+						{
+							Name: "config-templates",
+							VolumeSource: corev1.VolumeSource{
+								Projected: &corev1.ProjectedVolumeSource{
+									Sources: func() []corev1.VolumeProjection {
+										var sources []corev1.VolumeProjection
+										for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+											sources = append(sources, corev1.VolumeProjection{
+												ConfigMap: &corev1.ConfigMapProjection{
+													LocalObjectReference: corev1.LocalObjectReference{
+														Name: fmt.Sprintf("%s-config-%d", gc.Name, i),
+													},
+													Items: []corev1.KeyToPath{
+														{
+															Key:  "garage.toml",
+															Path: fmt.Sprintf("config-%d/garage.toml", i),
+														},
+													},
+												},
+											})
+										}
+										return sources
+									}(),
 								},
 							},
 						},

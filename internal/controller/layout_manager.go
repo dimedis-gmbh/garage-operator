@@ -37,28 +37,61 @@ func NewLayoutManager(config *rest.Config) (*LayoutManager, error) {
 
 // ConfigureLayout configures the Garage cluster layout
 func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
-	podName := fmt.Sprintf("%s-0", gc.Name)
-
-	// Wait for pod to be ready
-	if err := lm.waitForPod(ctx, gc.Namespace, podName, 5*time.Minute); err != nil {
-		return fmt.Errorf("pod not ready: %w", err)
+	// Wait for all pods to be ready
+	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+		podName := fmt.Sprintf("%s-%d", gc.Name, i)
+		if err := lm.waitForPod(ctx, gc.Namespace, podName, 5*time.Minute); err != nil {
+			return fmt.Errorf("pod %s not ready: %w", podName, err)
+		}
 	}
 
 	// Give Garage a moment to start up completely
 	time.Sleep(5 * time.Second)
 
-	// Get node IDs
-	nodeIDs, err := lm.getNodeIDs(ctx, gc.Namespace, podName)
-	if err != nil {
-		return fmt.Errorf("failed to get node IDs: %w", err)
+	// Get node IDs and addresses from each pod
+	type nodeInfo struct {
+		id      string
+		address string
+	}
+	nodes := make([]nodeInfo, 0, gc.Spec.ReplicaCount)
+	
+	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+		podName := fmt.Sprintf("%s-%d", gc.Name, i)
+		nodeID, err := lm.getNodeID(ctx, gc.Namespace, podName)
+		if err != nil {
+			return fmt.Errorf("failed to get node ID from pod %s: %w", podName, err)
+		}
+		
+		// Build the full node address with DNS name
+		nodeAddress := fmt.Sprintf("%s@%s.%s.%s.svc.cluster.local:3901",
+			nodeID, podName, gc.Name, gc.Namespace)
+		
+		nodes = append(nodes, nodeInfo{
+			id:      nodeID,
+			address: nodeAddress,
+		})
 	}
 
-	if len(nodeIDs) != int(gc.Spec.ReplicaCount) {
-		return fmt.Errorf("expected %d nodes, got %d", gc.Spec.ReplicaCount, len(nodeIDs))
+	// Connect all nodes to each other from pod-0
+	podName := fmt.Sprintf("%s-0", gc.Name)
+	for i, node := range nodes {
+		if i == 0 {
+			// Skip connecting pod-0 to itself
+			continue
+		}
+		
+		cmd := []string{"./garage", "node", "connect", node.address}
+		output, err := lm.execCommandWithOutput(ctx, gc.Namespace, podName, cmd)
+		if err != nil {
+			return fmt.Errorf("failed to connect to node %s: %w, output: %s", node.address, err, output)
+		}
 	}
+
+	// Give nodes time to establish connections
+	time.Sleep(2 * time.Second)
 
 	// Assign layout for each node
-	for i, nodeID := range nodeIDs {
+	for i, node := range nodes {
 		zone := fmt.Sprintf("z%d", i+1)
 		capacity := gc.Spec.VolumeSize
 
@@ -68,19 +101,21 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 			"assign",
 			"-z", zone,
 			"-c", capacity,
-			nodeID,
+			node.id,
 		}
 
 		output, err := lm.execCommandWithOutput(ctx, gc.Namespace, podName, cmd)
 		if err != nil {
-			return fmt.Errorf("failed to assign layout for node %s: %w, output: %s", nodeID, err, output)
+			return fmt.Errorf("failed to assign layout for node %s: %w, output: %s", node.id, err, output)
 		}
 	}
 
-	// Apply layout with automatic yes confirmation
+	// Apply layout
 	applyCmd := []string{
-		"sh", "-c",
-		"echo 'yes' | ./garage layout apply --version 1",
+		"./garage",
+		"layout",
+		"apply",
+		"--version", "1",
 	}
 
 	output, err := lm.execCommandWithOutput(ctx, gc.Namespace, podName, applyCmd)
@@ -89,10 +124,10 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	}
 
 	// Update GarageCluster status with node information
-	gc.Status.Nodes = make([]garagev1alpha1.GarageNode, len(nodeIDs))
-	for i, nodeID := range nodeIDs {
+	gc.Status.Nodes = make([]garagev1alpha1.GarageNode, len(nodes))
+	for i, node := range nodes {
 		gc.Status.Nodes[i] = garagev1alpha1.GarageNode{
-			ID:       nodeID,
+			ID:       node.id,
 			Zone:     fmt.Sprintf("z%d", i+1),
 			Capacity: gc.Spec.VolumeSize,
 			Status:   "Ready",
@@ -102,29 +137,31 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	return nil
 }
 
-// getNodeIDs retrieves all node IDs from the Garage cluster
-func (lm *LayoutManager) getNodeIDs(ctx context.Context, namespace, podName string) ([]string, error) {
+// getNodeID retrieves the node ID from a specific pod
+func (lm *LayoutManager) getNodeID(ctx context.Context, namespace, podName string) (string, error) {
 	cmd := []string{
-		"sh", "-c",
-		"./garage status | grep -v '^=' | tail -n +2 | awk '{print $1}'",
+		"./garage",
+		"node", "id",
 	}
 
 	output, err := lm.execCommandWithOutput(ctx, namespace, podName, cmd)
 	if err != nil {
-		return nil, fmt.Errorf("failed to execute command: %w", err)
+		return "", fmt.Errorf("failed to execute command: %w", err)
 	}
 
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	nodeIDs := make([]string, 0, len(lines))
-
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line != "" && !strings.HasPrefix(line, "=") {
-			nodeIDs = append(nodeIDs, line)
-		}
+	// The output may be in format: nodeID@hostname:port
+	// We need just the nodeID part (before the @)
+	nodeID := strings.TrimSpace(output)
+	if nodeID == "" {
+		return "", fmt.Errorf("empty node ID returned")
 	}
 
-	return nodeIDs, nil
+	// Extract just the ID part if @ is present
+	if idx := strings.Index(nodeID, "@"); idx > 0 {
+		nodeID = nodeID[:idx]
+	}
+
+	return nodeID, nil
 }
 
 // execCommandWithOutput executes a command in a pod and returns its output
