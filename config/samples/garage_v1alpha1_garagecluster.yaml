@@ -1,0 +1,38 @@
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: garagecluster
+    app.kubernetes.io/instance: garagecluster-sample
+    app.kubernetes.io/part-of: garage-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: garage-operator
+  name: garagecluster-sample
+spec:
+  # Number of Garage replicas
+  replicaCount: 4
+
+  # Replication mode: "2" means 2 copies on different nodes
+  # Tolerates failure of 2 nodes
+  replicationMode: "2"
+
+  # Volume size per replica
+  volumeSize: "20Gi"
+
+  # Optional: Specify storage class (leave empty for default)
+  # storageClass: "fast-ssd"
+
+  # Optional: S3 API configuration
+  s3Api:
+    enabled: true
+    region: "garage"
+    rootDomain: ".s3.garage.localhost"
+
+  # Optional: Resource limits
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"
