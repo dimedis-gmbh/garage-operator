@@ -145,10 +145,10 @@ make generate               # Generate code
 
 ### Deploy to cluster
 
-**Build and push your image:**
+**Build your image:**
 
 ```bash
-make docker-build docker-push IMG=<your-registry>/garage-operator:tag
+make docker-build IMG=$DOCKER_REPO_HOST/garage-operator:latest
 ```
 
 **Install the CRDs:**
@@ -160,7 +160,7 @@ make install
 **Deploy the operator:**
 
 ```bash
-make deploy IMG=<your-registry>/garage-operator:tag
+make deploy IMG=$DOCKER_REPO_HOST/garage-operator:latest
 ```
 
 **Create GarageCluster instances:**
