@@ -49,9 +49,9 @@ type GarageClusterReconciler struct {
 	Scheme *runtime.Scheme
 }
 
-// +kubebuilder:rbac:groups=garage.deuxfleurs.fr,resources=garageclusters,verbs=get;list;watch;create;update;patch;delete
-// +kubebuilder:rbac:groups=garage.deuxfleurs.fr,resources=garageclusters/status,verbs=get;update;patch
-// +kubebuilder:rbac:groups=garage.deuxfleurs.fr,resources=garageclusters/finalizers,verbs=update
+// +kubebuilder:rbac:groups=garage.dimedis.io,resources=garageclusters,verbs=get;list;watch;create;update;patch;delete
+// +kubebuilder:rbac:groups=garage.dimedis.io,resources=garageclusters/status,verbs=get;update;patch
+// +kubebuilder:rbac:groups=garage.dimedis.io,resources=garageclusters/finalizers,verbs=update
 // +kubebuilder:rbac:groups=apps,resources=statefulsets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
