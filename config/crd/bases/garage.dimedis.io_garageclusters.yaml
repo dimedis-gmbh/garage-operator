@@ -235,6 +235,15 @@ spec:
                   - type
                   type: object
                 type: array
+              connectedNodes:
+                description: ConnectedNodes is the number of nodes currently connected
+                  in the cluster
+                format: int32
+                type: integer
+              layoutVersion:
+                description: LayoutVersion is the current version of the cluster layout
+                format: int64
+                type: integer
               phase:
                 description: Phase represents the current phase of the cluster
                 enum:

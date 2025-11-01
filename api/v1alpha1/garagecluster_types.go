@@ -114,6 +114,14 @@ type GarageClusterStatus struct {
 	// S3Endpoint is the internal S3 API endpoint
 	// +optional
 	S3Endpoint string `json:"s3Endpoint,omitempty"`
+
+	// ConnectedNodes is the number of nodes currently connected in the cluster
+	// +optional
+	ConnectedNodes int32 `json:"connectedNodes,omitempty"`
+
+	// LayoutVersion is the current version of the cluster layout
+	// +optional
+	LayoutVersion int64 `json:"layoutVersion,omitempty"`
 }
 
 // +kubebuilder:object:root=true

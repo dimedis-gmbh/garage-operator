@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -27,10 +28,14 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/remotecommand"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -139,28 +144,67 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	garageCluster.Status.ReadyReplicas = sts.Status.ReadyReplicas
+	podsReady := sts.Status.ReadyReplicas >= garageCluster.Spec.ReplicaCount
 
-	if sts.Status.ReadyReplicas < garageCluster.Spec.ReplicaCount {
+	if !podsReady {
 		msg := fmt.Sprintf("Waiting for replicas: %d/%d ready",
 			sts.Status.ReadyReplicas, garageCluster.Spec.ReplicaCount)
 		r.updateStatus(ctx, garageCluster, "Deploying", msg)
+		r.updateConditions(ctx, garageCluster, nil, nil, false)
+		r.Status().Update(ctx, garageCluster)
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Update status to Ready
-	// Note: Garage handles cluster layout automatically via Kubernetes Discovery
+	// Pods are ready, now check cluster health
+	// Get REST config for kubectl exec
+	config, err := ctrl.GetConfig()
+	if err != nil {
+		logger.Error(err, "Failed to get REST config")
+		r.updateStatus(ctx, garageCluster, "Failed", "Failed to get REST config")
+		r.updateConditions(ctx, garageCluster, nil, nil, podsReady)
+		r.Status().Update(ctx, garageCluster)
+		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+	}
+
+	health, status, err := r.checkClusterHealth(ctx, garageCluster, config)
+	if err != nil {
+		logger.Error(err, "Failed to check cluster health")
+		// Don't fail completely - set conditions to Unknown and retry
+		r.updateStatus(ctx, garageCluster, "Deploying", fmt.Sprintf("Waiting for cluster health: %v", err))
+		r.updateConditions(ctx, garageCluster, nil, nil, podsReady)
+		r.Status().Update(ctx, garageCluster)
+		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
+	}
+
+	// Update S3 endpoint
 	garageCluster.Status.S3Endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:3900",
 		garageCluster.Name, garageCluster.Namespace)
-	r.updateStatus(ctx, garageCluster, "Ready", "Cluster is operational")
 
-	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
+	// Update conditions based on health
+	r.updateConditions(ctx, garageCluster, health, status, podsReady)
+
+	// Set phase based on overall cluster health
+	// healthy or degraded = Ready (operational)
+	// unavailable = Deploying (not yet operational)
+	if (health.Status == "healthy" || health.Status == "degraded") && podsReady {
+		r.updateStatus(ctx, garageCluster, "Ready", fmt.Sprintf("Cluster is operational (%s)", health.Status))
+	} else if health.Status == "unavailable" {
+		r.updateStatus(ctx, garageCluster, "Deploying", "Cluster is unavailable, waiting for quorum")
+	} else {
+		r.updateStatus(ctx, garageCluster, "Deploying", fmt.Sprintf("Cluster status: %s", health.Status))
+	}
+
+	r.Status().Update(ctx, garageCluster)
+
+	// Requeue to continuously check health
+	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 }
 
 func (r *GarageClusterReconciler) reconcileSecret(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
 	secretName := gc.Name + "-rpc-secret"
 	secret := &corev1.Secret{}
 	err := r.Get(ctx, types.NamespacedName{Name: secretName, Namespace: gc.Namespace}, secret)
-	
+
 	if err != nil && errors.IsNotFound(err) {
 		// Create new secret with generated RPC secret
 		secret = &corev1.Secret{
@@ -179,7 +223,7 @@ func (r *GarageClusterReconciler) reconcileSecret(ctx context.Context, gc *garag
 
 		return r.Create(ctx, secret)
 	}
-	
+
 	return err
 }
 
@@ -242,7 +286,7 @@ api_bind_addr = "[::]:3903"
 	} else if err != nil {
 		return err
 	}
-	
+
 	// Update if changed
 	found.Data = cm.Data
 	return r.Update(ctx, found)
@@ -590,31 +634,200 @@ func (r *GarageClusterReconciler) reconcileDelete(ctx context.Context, gc *garag
 
 func (r *GarageClusterReconciler) updateStatus(ctx context.Context, gc *garagev1alpha1.GarageCluster, phase, message string) {
 	gc.Status.Phase = phase
-
-	// Update conditions
-	now := metav1.Now()
-	condition := metav1.Condition{
-		Type:               phase,
-		Status:             metav1.ConditionTrue,
-		LastTransitionTime: now,
-		Reason:             phase,
-		Message:            message,
-	}
-
-	// Simple condition management - in production use meta.SetStatusCondition
-	found := false
-	for i, cond := range gc.Status.Conditions {
-		if cond.Type == phase {
-			gc.Status.Conditions[i] = condition
-			found = true
-			break
-		}
-	}
-	if !found {
-		gc.Status.Conditions = append(gc.Status.Conditions, condition)
-	}
-
 	r.Status().Update(ctx, gc)
+}
+
+// ClusterHealth represents Garage cluster health information
+type ClusterHealth struct {
+	Status           string `json:"status"`
+	KnownNodes       int    `json:"knownNodes"`
+	ConnectedNodes   int    `json:"connectedNodes"`
+	StorageNodes     int    `json:"storageNodes"`
+	StorageNodesUp   int    `json:"storageNodesUp"`
+	Partitions       int    `json:"partitions"`
+	PartitionsQuorum int    `json:"partitionsQuorum"`
+	PartitionsAllOk  int    `json:"partitionsAllOk"`
+}
+
+// ClusterStatus represents Garage cluster status information
+type ClusterStatus struct {
+	LayoutVersion int64 `json:"layoutVersion"`
+}
+
+// checkClusterHealth queries the Garage cluster health via kubectl exec
+func (r *GarageClusterReconciler) checkClusterHealth(ctx context.Context, gc *garagev1alpha1.GarageCluster, config *rest.Config) (*ClusterHealth, *ClusterStatus, error) {
+	logger := log.FromContext(ctx)
+
+	// Get the first ready pod to query
+	podName := fmt.Sprintf("%s-0", gc.Name)
+
+	// Query cluster health
+	healthCmd := []string{"./garage", "json-api", "GetClusterHealth"}
+	healthOutput, err := r.execInPod(ctx, gc.Namespace, podName, healthCmd, config)
+	if err != nil {
+		logger.Error(err, "Failed to execute GetClusterHealth")
+		return nil, nil, fmt.Errorf("failed to query cluster health: %w", err)
+	}
+
+	health := &ClusterHealth{}
+	if err := json.Unmarshal([]byte(healthOutput), health); err != nil {
+		logger.Error(err, "Failed to parse cluster health response", "output", healthOutput)
+		return nil, nil, fmt.Errorf("failed to parse health response: %w", err)
+	}
+
+	// Query cluster status for layout version
+	statusCmd := []string{"./garage", "json-api", "GetClusterStatus"}
+	statusOutput, err := r.execInPod(ctx, gc.Namespace, podName, statusCmd, config)
+	if err != nil {
+		logger.Error(err, "Failed to execute GetClusterStatus")
+		return health, nil, fmt.Errorf("failed to query cluster status: %w", err)
+	}
+
+	status := &ClusterStatus{}
+	if err := json.Unmarshal([]byte(statusOutput), status); err != nil {
+		logger.Error(err, "Failed to parse cluster status response", "output", statusOutput)
+		return health, nil, fmt.Errorf("failed to parse status response: %w", err)
+	}
+
+	return health, status, nil
+}
+
+// execInPod executes a command in a pod and returns the output
+func (r *GarageClusterReconciler) execInPod(ctx context.Context, namespace, podName string, command []string, config *rest.Config) (string, error) {
+	clientset, err := kubernetes.NewForConfig(config)
+	if err != nil {
+		return "", fmt.Errorf("failed to create clientset: %w", err)
+	}
+
+	req := clientset.CoreV1().RESTClient().Post().
+		Resource("pods").
+		Name(podName).
+		Namespace(namespace).
+		SubResource("exec")
+
+	req.VersionedParams(&corev1.PodExecOptions{
+		Command: command,
+		Stdout:  true,
+		Stderr:  true,
+	}, runtime.NewParameterCodec(r.Scheme))
+
+	exec, err := remotecommand.NewSPDYExecutor(config, "POST", req.URL())
+	if err != nil {
+		return "", fmt.Errorf("failed to create executor: %w", err)
+	}
+
+	var stdout, stderr string
+	stdoutWriter := &stringWriter{str: &stdout}
+	stderrWriter := &stringWriter{str: &stderr}
+
+	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
+		Stdout: stdoutWriter,
+		Stderr: stderrWriter,
+	})
+
+	if err != nil {
+		return "", fmt.Errorf("exec failed: %w (stderr: %s)", err, stderr)
+	}
+
+	return stdout, nil
+}
+
+// stringWriter implements io.Writer to capture output as string
+type stringWriter struct {
+	str *string
+}
+
+func (sw *stringWriter) Write(p []byte) (n int, err error) {
+	*sw.str += string(p)
+	return len(p), nil
+}
+
+// updateConditions updates the Kubernetes Conditions based on cluster health
+func (r *GarageClusterReconciler) updateConditions(ctx context.Context, gc *garagev1alpha1.GarageCluster, health *ClusterHealth, status *ClusterStatus, podsReady bool) {
+	// PodsReady condition
+	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+		Type:    "PodsReady",
+		Status:  metav1.ConditionStatus(map[bool]string{true: "True", false: "False"}[podsReady]),
+		Reason:  "PodStatus",
+		Message: fmt.Sprintf("%d/%d pods ready", gc.Status.ReadyReplicas, gc.Spec.ReplicaCount),
+	})
+
+	if health == nil {
+		// Can't check health - mark other conditions as Unknown
+		meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+			Type:    "NodesConnected",
+			Status:  metav1.ConditionUnknown,
+			Reason:  "HealthCheckFailed",
+			Message: "Unable to query cluster health",
+		})
+		meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+			Type:    "LayoutReady",
+			Status:  metav1.ConditionUnknown,
+			Reason:  "HealthCheckFailed",
+			Message: "Unable to query cluster status",
+		})
+		meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+			Type:    "Ready",
+			Status:  metav1.ConditionFalse,
+			Reason:  "HealthCheckFailed",
+			Message: "Cluster health check failed",
+		})
+		return
+	}
+
+	// Update status fields
+	gc.Status.ConnectedNodes = int32(health.ConnectedNodes)
+	if status != nil {
+		gc.Status.LayoutVersion = status.LayoutVersion
+	}
+
+	// NodesConnected condition
+	nodesConnected := health.ConnectedNodes >= health.StorageNodes
+	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+		Type:    "NodesConnected",
+		Status:  metav1.ConditionStatus(map[bool]string{true: "True", false: "False"}[nodesConnected]),
+		Reason:  "NodeConnectivity",
+		Message: fmt.Sprintf("%d/%d nodes connected", health.ConnectedNodes, health.StorageNodes),
+	})
+
+	// LayoutReady condition (partitions have quorum)
+	layoutReady := health.PartitionsQuorum == health.Partitions
+	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+		Type:    "LayoutReady",
+		Status:  metav1.ConditionStatus(map[bool]string{true: "True", false: "False"}[layoutReady]),
+		Reason:  "LayoutStatus",
+		Message: fmt.Sprintf("%d/%d partitions have quorum (status: %s)", health.PartitionsQuorum, health.Partitions, health.Status),
+	})
+
+	// Degraded condition - cluster is degraded if not all nodes/partitions are optimal
+	isDegraded := health.Status == "degraded"
+	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+		Type:    "Degraded",
+		Status:  metav1.ConditionStatus(map[bool]string{true: "True", false: "False"}[isDegraded]),
+		Reason:  "ClusterDegradation",
+		Message: fmt.Sprintf("Cluster is %s: %d/%d nodes, %d/%d partitions OK", health.Status, health.ConnectedNodes, health.StorageNodes, health.PartitionsAllOk, health.Partitions),
+	})
+
+	// Ready condition - cluster is ready if it can serve requests (healthy or degraded, but not unavailable)
+	// A degraded cluster is still operational, just not fully optimal
+	isOperational := health.Status == "healthy" || health.Status == "degraded"
+	clusterReady := podsReady && layoutReady && isOperational
+	
+	var readyMessage string
+	if health.Status == "healthy" {
+		readyMessage = "Cluster is fully operational"
+	} else if health.Status == "degraded" {
+		readyMessage = fmt.Sprintf("Cluster is operational but degraded (%d/%d nodes connected)", health.ConnectedNodes, health.StorageNodes)
+	} else {
+		readyMessage = fmt.Sprintf("Cluster is unavailable: %s", health.Status)
+	}
+
+	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
+		Type:    "Ready",
+		Status:  metav1.ConditionStatus(map[bool]string{true: "True", false: "False"}[clusterReady]),
+		Reason:  "ClusterHealth",
+		Message: readyMessage,
+	})
 }
 
 // SetupWithManager sets up the controller with the Manager.
