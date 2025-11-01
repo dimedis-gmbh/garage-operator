@@ -62,3 +62,4 @@ spec:
     annotations:
       cert-manager.io/cluster-issuer: letsencrypt-prod
       kubernetes.io/tls-acme: "true"
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
