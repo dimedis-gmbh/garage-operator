@@ -8,6 +8,7 @@ rules:
   - ""
   resources:
   - configmaps
+  - secrets
   - serviceaccounts
   - services
   verbs:
@@ -34,9 +35,31 @@ rules:
   verbs:
   - create
 - apiGroups:
+  - apiextensions.k8s.io
+  resources:
+  - customresourcedefinitions
+  verbs:
+  - create
+  - get
+  - list
+  - patch
+  - watch
+- apiGroups:
   - apps
   resources:
   - statefulsets
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - deuxfleurs.fr
+  resources:
+  - garagenodes
   verbs:
   - create
   - delete
@@ -74,6 +97,8 @@ rules:
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
+  - clusterrolebindings
+  - clusterroles
   - rolebindings
   - roles
   verbs:

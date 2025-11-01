@@ -148,10 +148,6 @@ spec:
                       More info: https://kubernetes.io/docs/concepts/configuration/manage-resources-containers/
                     type: object
                 type: object
-              rpcSecret:
-                description: RPCSecret for cluster communication (auto-generated if
-                  empty)
-                type: string
               s3Api:
                 description: S3Api configuration
                 properties:

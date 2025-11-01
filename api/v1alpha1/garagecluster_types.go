@@ -42,10 +42,6 @@ type GarageClusterSpec struct {
 	// +optional
 	StorageClass string `json:"storageClass,omitempty"`
 
-	// RPCSecret for cluster communication (auto-generated if empty)
-	// +optional
-	RPCSecret string `json:"rpcSecret,omitempty"`
-
 	// S3Api configuration
 	// +optional
 	S3Api *S3ApiConfig `json:"s3Api,omitempty"`
