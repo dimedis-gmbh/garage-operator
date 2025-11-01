@@ -191,9 +191,6 @@ func (r *GarageClusterReconciler) reconcileConfigMap(ctx context.Context, gc *ga
 
 	// Create a ConfigMap for each pod in the StatefulSet
 	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
-		podName := fmt.Sprintf("%s-%d", gc.Name, i)
-		rpcPublicAddr := fmt.Sprintf("%s.%s.%s.svc.cluster.local:3901", podName, gc.Name, gc.Namespace)
-
 		// Map old replication_mode to new replication_factor
 		// "1" -> 1, "2" -> 2, "3" -> 3
 		replicationFactor := gc.Spec.ReplicationMode
@@ -205,12 +202,14 @@ replication_factor = %s
 consistency_mode = "consistent"
 
 rpc_bind_addr = "[::]:3901"
-rpc_public_addr = "%s"
 rpc_secret = "%s"
+
+bootstrap_peers = []
 
 [kubernetes_discovery]
 service_name = "%s"
 namespace = "%s"
+skip_crd = false
 
 [s3_api]
 s3_region = "%s"
@@ -219,7 +218,7 @@ root_domain = "%s"
 
 [admin]
 api_bind_addr = "[::]:3903"
-`, replicationFactor, rpcPublicAddr, rpcSecret, gc.Name, gc.Namespace, region, rootDomain)
+`, replicationFactor, rpcSecret, gc.Name, gc.Namespace, region, rootDomain)
 
 		cm := &corev1.ConfigMap{
 			ObjectMeta: metav1.ObjectMeta{
