@@ -53,6 +53,34 @@ kubectl get garagecluster
 kubectl describe garagecluster garagecluster-sample
 ```
 
+## Local development with Kind cluster
+
+### Create cluster
+
+```bash
+cd kind/infra
+./create.sh
+```
+
+### Deploy platform services
+
+```bash
+cd kind/k8s
+terraform init
+terraform apply
+```
+
+### Build and deploy into Kind cluster
+
+```bash
+# Build Docker image, load into Kind and deploy operator
+make docker-build && make docker-kind && make deploy
+
+# Since we're using a :dev tag rollout the new operator
+kubectl rollout restart -n garage-operator-system \
+        deployments/garage-operator-controller-manager
+```
+
 ## GarageCluster Configuration
 
 ### Basic Example
