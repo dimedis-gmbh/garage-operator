@@ -76,7 +76,7 @@ terraform apply
 # Build Docker image, load into Kind and deploy operator
 make docker-build && make docker-kind && make deploy
 
-# Since we're using a :dev tag rollout the new operator
+# Since we're using a :dev tag restart operator deployment
 kubectl rollout restart -n garage-operator-system \
         deployments/garage-operator-controller-manager
 ```

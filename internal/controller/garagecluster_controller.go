@@ -157,7 +157,6 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Pods are ready, now check cluster health
 	// Get REST config for kubectl exec
 	config, err := ctrl.GetConfig()
 	if err != nil {
@@ -167,6 +166,38 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		r.Status().Update(ctx, garageCluster)
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
+
+	// Configure layout if not done yet
+	if garageCluster.Status.LayoutVersion == 0 {
+		r.updateStatus(ctx, garageCluster, "LayoutConfiguring", "Configuring cluster layout")
+		r.Status().Update(ctx, garageCluster)
+
+		// Create LayoutManager
+		layoutMgr, err := NewLayoutManager(config)
+		if err != nil {
+			logger.Error(err, "Failed to create LayoutManager")
+			r.updateStatus(ctx, garageCluster, "Failed", "LayoutManager creation failed: "+err.Error())
+			r.Status().Update(ctx, garageCluster)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+		}
+
+		if err := layoutMgr.ConfigureLayout(ctx, garageCluster); err != nil {
+			logger.Error(err, "Failed to configure layout")
+			r.updateStatus(ctx, garageCluster, "Failed", "Layout configuration failed: "+err.Error())
+			r.Status().Update(ctx, garageCluster)
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+		}
+
+		// Mark layout as configured
+		garageCluster.Status.LayoutVersion = 1
+		if err := r.Status().Update(ctx, garageCluster); err != nil {
+			return ctrl.Result{}, err
+		}
+
+		logger.Info("Layout configuration completed successfully")
+	}
+
+	// Pods are ready and layout is configured, now check cluster health
 
 	health, status, err := r.checkClusterHealth(ctx, garageCluster, config)
 	if err != nil {

@@ -146,7 +146,7 @@ type IngressTLSConfig struct {
 // GarageClusterStatus defines the observed state of GarageCluster
 type GarageClusterStatus struct {
 	// Phase represents the current phase of the cluster
-	// +kubebuilder:validation:Enum=Pending;Deploying;Ready;Failed
+	// +kubebuilder:validation:Enum=Pending;Deploying;LayoutConfiguring;Ready;Failed
 	// +optional
 	Phase string `json:"phase,omitempty"`
 

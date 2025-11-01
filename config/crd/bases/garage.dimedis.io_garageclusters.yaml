@@ -297,6 +297,7 @@ spec:
                 enum:
                 - Pending
                 - Deploying
+                - LayoutConfiguring
                 - Ready
                 - Failed
                 type: string
