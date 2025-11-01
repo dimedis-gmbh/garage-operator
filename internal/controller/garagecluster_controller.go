@@ -22,6 +22,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -33,6 +34,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/intstr"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/remotecommand"
@@ -140,7 +142,11 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		Name:      garageCluster.Name,
 		Namespace: garageCluster.Namespace,
 	}, sts); err != nil {
-		return ctrl.Result{RequeueAfter: 10 * time.Second}, err
+		if errors.IsNotFound(err) {
+			// StatefulSet not yet created, will be reconciled again
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{}, err
 	}
 
 	garageCluster.Status.ReadyReplicas = sts.Status.ReadyReplicas
@@ -313,10 +319,27 @@ func (r *GarageClusterReconciler) reconcileService(ctx context.Context, gc *gara
 				"app": gc.Name,
 			},
 			Ports: []corev1.ServicePort{
-				{Name: "s3-api", Port: 3900},
-				{Name: "rpc", Port: 3901},
-				{Name: "admin", Port: 3903},
+				{
+					Name:       "s3-api",
+					Port:       3900,
+					TargetPort: intstr.FromInt(3900),
+					Protocol:   corev1.ProtocolTCP,
+				},
+				{
+					Name:       "rpc",
+					Port:       3901,
+					TargetPort: intstr.FromInt(3901),
+					Protocol:   corev1.ProtocolTCP,
+				},
+				{
+					Name:       "admin",
+					Port:       3903,
+					TargetPort: intstr.FromInt(3903),
+					Protocol:   corev1.ProtocolTCP,
+				},
 			},
+			PublishNotReadyAddresses: true,
+			// Do not set SessionAffinity for headless services
 		},
 	}
 
@@ -327,7 +350,28 @@ func (r *GarageClusterReconciler) reconcileService(ctx context.Context, gc *gara
 	found := &corev1.Service{}
 	err := r.Get(ctx, types.NamespacedName{Name: svc.Name, Namespace: svc.Namespace}, found)
 	if err != nil && errors.IsNotFound(err) {
+		log.FromContext(ctx).Info("Creating new Service")
 		return r.Create(ctx, svc)
+	} else if err == nil {
+		// Only update if there are actual changes to avoid unnecessary API calls
+		needsUpdate := false
+		if !reflect.DeepEqual(found.Spec.Selector, svc.Spec.Selector) {
+			found.Spec.Selector = svc.Spec.Selector
+			needsUpdate = true
+		}
+		if !reflect.DeepEqual(found.Spec.Ports, svc.Spec.Ports) {
+			found.Spec.Ports = svc.Spec.Ports
+			needsUpdate = true
+		}
+		if found.Spec.PublishNotReadyAddresses != svc.Spec.PublishNotReadyAddresses {
+			found.Spec.PublishNotReadyAddresses = svc.Spec.PublishNotReadyAddresses
+			needsUpdate = true
+		}
+		if needsUpdate {
+			log.FromContext(ctx).Info("Updating Service due to spec changes")
+			return r.Update(ctx, found)
+		}
+		return nil
 	}
 	return err
 }
