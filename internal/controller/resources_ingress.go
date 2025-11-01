@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"reflect"
 
 	networkingv1 "k8s.io/api/networking/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
@@ -110,11 +111,51 @@ func (r *GarageClusterReconciler) reconcileIngress(ctx context.Context, gc *gara
 		log.FromContext(ctx).Info("Creating new Ingress")
 		return r.Create(ctx, ingress)
 	} else if err == nil {
-		// Update existing ingress
-		found.Annotations = ingress.Annotations
-		found.Spec = ingress.Spec
-		log.FromContext(ctx).Info("Updating Ingress")
-		return r.Update(ctx, found)
+		logger := log.FromContext(ctx)
+
+		// Check if update is actually needed
+		needsUpdate := false
+
+		// Compare annotations
+		if !reflect.DeepEqual(found.Annotations, ingress.Annotations) {
+			logger.Info("Ingress annotations changed",
+				"old", found.Annotations,
+				"new", ingress.Annotations)
+			needsUpdate = true
+		}
+
+		// Compare IngressClassName
+		if !reflect.DeepEqual(found.Spec.IngressClassName, ingress.Spec.IngressClassName) {
+			logger.Info("Ingress className changed",
+				"old", found.Spec.IngressClassName,
+				"new", ingress.Spec.IngressClassName)
+			needsUpdate = true
+		}
+
+		// Compare Rules
+		if !reflect.DeepEqual(found.Spec.Rules, ingress.Spec.Rules) {
+			logger.Info("Ingress rules changed",
+				"old", found.Spec.Rules,
+				"new", ingress.Spec.Rules)
+			needsUpdate = true
+		}
+
+		// Compare TLS
+		if !reflect.DeepEqual(found.Spec.TLS, ingress.Spec.TLS) {
+			logger.Info("Ingress TLS changed",
+				"old", found.Spec.TLS,
+				"new", ingress.Spec.TLS)
+			needsUpdate = true
+		}
+
+		if needsUpdate {
+			found.Annotations = ingress.Annotations
+			found.Spec = ingress.Spec
+			logger.Info("Updating Ingress due to spec changes")
+			return r.Update(ctx, found)
+		}
+
+		return nil
 	}
 	return err
 }
