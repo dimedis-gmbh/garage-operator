@@ -255,9 +255,15 @@ func (r *GarageClusterReconciler) reconcileConfigMap(ctx context.Context, gc *ga
 		consistencyMode = gc.Spec.ConsistencyMode
 	}
 
+	blockSize := "1Mi"
+	if gc.Spec.BlockSize != "" {
+		blockSize = gc.Spec.BlockSize
+	}
+
 	configData := fmt.Sprintf(`metadata_dir = "/mnt/meta"
 data_dir = "/mnt/data"
 db_engine = "sqlite"
+block_size = "%s"
 replication_factor = %d
 consistency_mode = "%s"
 
@@ -278,7 +284,7 @@ root_domain = "%s"
 
 [admin]
 api_bind_addr = "[::]:3903"
-`, replicationFactor, consistencyMode, gc.Name, gc.Namespace, region, rootDomain)
+`, blockSize, replicationFactor, consistencyMode, gc.Name, gc.Namespace, region, rootDomain)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -512,9 +518,34 @@ func (r *GarageClusterReconciler) reconcileServiceAccount(ctx context.Context, g
 }
 
 func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
-	volumeSize, err := resource.ParseQuantity(gc.Spec.VolumeSize)
+	// Determine data volume configuration
+	dataSize := "20Gi"
+	dataStorageClass := ""
+	if gc.Spec.Persistence != nil && gc.Spec.Persistence.Data != nil {
+		if gc.Spec.Persistence.Data.Size != "" {
+			dataSize = gc.Spec.Persistence.Data.Size
+		}
+		dataStorageClass = gc.Spec.Persistence.Data.StorageClass
+	}
+
+	// Determine meta volume configuration
+	metaSize := "20Gi"
+	metaStorageClass := ""
+	if gc.Spec.Persistence != nil && gc.Spec.Persistence.Meta != nil {
+		if gc.Spec.Persistence.Meta.Size != "" {
+			metaSize = gc.Spec.Persistence.Meta.Size
+		}
+		metaStorageClass = gc.Spec.Persistence.Meta.StorageClass
+	}
+
+	dataSizeQuantity, err := resource.ParseQuantity(dataSize)
 	if err != nil {
-		return fmt.Errorf("invalid volume size: %w", err)
+		return fmt.Errorf("invalid data volume size: %w", err)
+	}
+
+	metaSizeQuantity, err := resource.ParseQuantity(metaSize)
+	if err != nil {
+		return fmt.Errorf("invalid meta volume size: %w", err)
 	}
 
 	// Default resources if not specified
@@ -526,11 +557,6 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 	}
 	if gc.Spec.Resources != nil {
 		resources = *gc.Spec.Resources
-	}
-
-	storageClassName := gc.Spec.StorageClass
-	if storageClassName == "" {
-		storageClassName = "" // Use cluster default
 	}
 
 	sts := &appsv1.StatefulSet{
@@ -620,7 +646,7 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceStorage: volumeSize,
+								corev1.ResourceStorage: metaSizeQuantity,
 							},
 						},
 					},
@@ -631,7 +657,7 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 						AccessModes: []corev1.PersistentVolumeAccessMode{corev1.ReadWriteOnce},
 						Resources: corev1.VolumeResourceRequirements{
 							Requests: corev1.ResourceList{
-								corev1.ResourceStorage: volumeSize,
+								corev1.ResourceStorage: dataSizeQuantity,
 							},
 						},
 					},
@@ -640,11 +666,14 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 		},
 	}
 
-	// Only set storageClassName if explicitly provided
-	if storageClassName != "" {
-		for i := range sts.Spec.VolumeClaimTemplates {
-			sts.Spec.VolumeClaimTemplates[i].Spec.StorageClassName = &storageClassName
-		}
+	// Set storageClassName for meta volume if specified
+	if metaStorageClass != "" {
+		sts.Spec.VolumeClaimTemplates[0].Spec.StorageClassName = &metaStorageClass
+	}
+
+	// Set storageClassName for data volume if specified
+	if dataStorageClass != "" {
+		sts.Spec.VolumeClaimTemplates[1].Spec.StorageClassName = &dataStorageClass
 	}
 
 	if err := controllerutil.SetControllerReference(gc, sts, r.Scheme); err != nil {

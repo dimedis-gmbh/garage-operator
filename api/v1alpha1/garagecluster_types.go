@@ -45,14 +45,15 @@ type GarageClusterSpec struct {
 	// +optional
 	ConsistencyMode string `json:"consistencyMode,omitempty"`
 
-	// VolumeSize is the size of persistent volumes
-	// +kubebuilder:default="20Gi"
+	// BlockSize is the size of Garage data blocks
+	// See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#block_size
+	// +kubebuilder:default="1Mi"
 	// +optional
-	VolumeSize string `json:"volumeSize,omitempty"`
+	BlockSize string `json:"blockSize,omitempty"`
 
-	// StorageClass for persistent volumes
+	// Persistence configuration for data and metadata volumes
 	// +optional
-	StorageClass string `json:"storageClass,omitempty"`
+	Persistence *PersistenceConfig `json:"persistence,omitempty"`
 
 	// S3Api configuration
 	// +optional
@@ -65,6 +66,29 @@ type GarageClusterSpec struct {
 	// Resources for Garage pods
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+}
+
+// PersistenceConfig defines persistent volume configuration
+type PersistenceConfig struct {
+	// Data volume configuration
+	// +optional
+	Data *VolumeConfig `json:"data,omitempty"`
+
+	// Meta volume configuration
+	// +optional
+	Meta *VolumeConfig `json:"meta,omitempty"`
+}
+
+// VolumeConfig defines volume settings
+type VolumeConfig struct {
+	// Size of the volume
+	// +kubebuilder:default="20Gi"
+	// +optional
+	Size string `json:"size,omitempty"`
+
+	// StorageClass for the volume
+	// +optional
+	StorageClass string `json:"storageClass,omitempty"`
 }
 
 // S3ApiConfig defines S3 API settings

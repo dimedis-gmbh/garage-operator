@@ -58,6 +58,12 @@ spec:
           spec:
             description: GarageClusterSpec defines the desired state of GarageCluster
             properties:
+              blockSize:
+                default: 1Mi
+                description: |-
+                  BlockSize is the size of Garage data blocks
+                  See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#block_size
+                type: string
               consistencyMode:
                 default: consistent
                 description: |-
@@ -91,6 +97,32 @@ spec:
                   tls:
                     description: TLS enabled
                     type: boolean
+                type: object
+              persistence:
+                description: Persistence configuration for data and metadata volumes
+                properties:
+                  data:
+                    description: Data volume configuration
+                    properties:
+                      size:
+                        default: 20Gi
+                        description: Size of the volume
+                        type: string
+                      storageClass:
+                        description: StorageClass for the volume
+                        type: string
+                    type: object
+                  meta:
+                    description: Meta volume configuration
+                    properties:
+                      size:
+                        default: 20Gi
+                        description: Size of the volume
+                        type: string
+                      storageClass:
+                        description: StorageClass for the volume
+                        type: string
+                    type: object
                 type: object
               replicaCount:
                 description: ReplicaCount is the number of Garage pod replicas in
@@ -181,13 +213,6 @@ spec:
                     description: RootDomain for S3 API
                     type: string
                 type: object
-              storageClass:
-                description: StorageClass for persistent volumes
-                type: string
-              volumeSize:
-                default: 20Gi
-                description: VolumeSize is the size of persistent volumes
-                type: string
             required:
             - replicaCount
             type: object

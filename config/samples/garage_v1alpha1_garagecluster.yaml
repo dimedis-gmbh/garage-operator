@@ -23,11 +23,18 @@ spec:
   # See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#consistency_mode
   consistencyMode: "consistent"
 
-  # Volume size per replica
-  volumeSize: "20Gi"
+  # Block size for Garage data blocks
+  # See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#block_size
+  blockSize: "1Mi"
 
-  # Optional: Specify storage class (leave empty for default)
-  # storageClass: "fast-ssd"
+  # Persistence configuration
+  persistence:
+    data:
+      size: "20Gi"
+      # storageClass: "fast-ssd"
+    meta:
+      size: "1Gi"
+      # storageClass: "fast-ssd"
 
   # Optional: S3 API configuration
   s3Api:

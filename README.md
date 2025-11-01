@@ -63,9 +63,14 @@ kind: GarageCluster
 metadata:
   name: my-garage
 spec:
-  replicaCount: 4
-  replicationMode: "2"
-  volumeSize: "20Gi"
+  replicaCount: 5
+  replicationFactor: 2
+  consistencyMode: "consistent"
+  persistence:
+    data:
+      size: "10Gi"
+    meta:
+      size: "1Gi"
 ```
 
 ### Production Example
@@ -76,10 +81,18 @@ kind: GarageCluster
 metadata:
   name: production-garage
 spec:
-  replicaCount: 6
-  replicationMode: "3"
-  volumeSize: "100Gi"
-  storageClass: "fast-ssd"
+  replicaCount: 10
+  replicationFactor: 3
+  consistencyMode: "consistent"
+  blockSize: 10Mi
+
+  persistence:
+    data:
+      size: "2000Gi"
+      storageClass: "hdd-xfs"
+    meta:
+      size: "100Gi"
+      storageClass: "ssd-zfs"
 
   resources:
     requests:
