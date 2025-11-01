@@ -18,8 +18,11 @@ spec:
     - jsonPath: .spec.replicaCount
       name: Replicas
       type: integer
-    - jsonPath: .spec.replicationMode
-      name: Replication
+    - jsonPath: .spec.replicationFactor
+      name: RF
+      type: integer
+    - jsonPath: .spec.consistencyMode
+      name: Consistency
       type: string
     - jsonPath: .status.readyReplicas
       name: Ready
@@ -55,6 +58,19 @@ spec:
           spec:
             description: GarageClusterSpec defines the desired state of GarageCluster
             properties:
+              consistencyMode:
+                default: consistent
+                description: |-
+                  ConsistencyMode defines the consistency mode for Garage
+                  - consistent: full consistency (n out of n nodes must respond)
+                  - degraded: degraded consistency (n/2 + 1 out of n nodes must respond)
+                  - dangerous: no consistency check (1 out of n nodes must respond)
+                  See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#consistency_mode
+                enum:
+                - consistent
+                - degraded
+                - dangerous
+                type: string
               ingress:
                 description: Ingress configuration
                 properties:
@@ -77,18 +93,19 @@ spec:
                     type: boolean
                 type: object
               replicaCount:
-                description: ReplicaCount is the number of Garage replicas
+                description: ReplicaCount is the number of Garage pod replicas in
+                  the StatefulSet
                 format: int32
                 minimum: 1
                 type: integer
-              replicationMode:
-                description: ReplicationMode defines how data is replicated ("1",
-                  "2", or "3")
-                enum:
-                - "1"
-                - "2"
-                - "3"
-                type: string
+              replicationFactor:
+                default: 3
+                description: |-
+                  ReplicationFactor is the number of copies of data that will be stored in the cluster
+                  See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#replication_factor
+                format: int32
+                minimum: 1
+                type: integer
               resources:
                 description: Resources for Garage pods
                 properties:
@@ -173,7 +190,6 @@ spec:
                 type: string
             required:
             - replicaCount
-            - replicationMode
             type: object
           status:
             description: GarageClusterStatus defines the observed state of GarageCluster
@@ -261,6 +277,10 @@ spec:
                 type: string
             type: object
         type: object
+        x-kubernetes-validations:
+        - message: replicationFactor cannot be greater than replicaCount
+          rule: '!has(self.spec.replicationFactor) || self.spec.replicationFactor
+            <= self.spec.replicaCount'
     served: true
     storage: true
     subresources:

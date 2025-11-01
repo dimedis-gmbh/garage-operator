@@ -52,9 +52,10 @@ var _ = Describe("GarageCluster Controller", func() {
 						Namespace: "default",
 					},
 					Spec: garagev1alpha1.GarageClusterSpec{
-						ReplicaCount:    3,
-						ReplicationMode: "2",
-						VolumeSize:      "10Gi",
+						ReplicaCount:      3,
+						ReplicationFactor: 3,
+						ConsistencyMode:   "consistent",
+						VolumeSize:        "10Gi",
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())

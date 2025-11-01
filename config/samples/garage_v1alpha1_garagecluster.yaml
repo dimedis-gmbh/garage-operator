@@ -9,12 +9,19 @@ metadata:
     app.kubernetes.io/created-by: garage-operator
   name: garagecluster-sample
 spec:
-  # Number of Garage replicas
+  # Number of Garage pod replicas in the StatefulSet
   replicaCount: 4
 
-  # Replication mode: "2" means 2 copies on different nodes
-  # Tolerates failure of 2 nodes
-  replicationMode: "2"
+  # Replication factor: number of copies of data stored in the cluster (minimum 1, typically 3)
+  # See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#replication_factor
+  replicationFactor: 2
+
+  # Consistency mode for read/write operations
+  # - consistent: full consistency (n out of n nodes must respond)
+  # - degraded: degraded consistency (n/2 + 1 out of n nodes must respond)
+  # - dangerous: no consistency check (1 out of n nodes must respond)
+  # See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#consistency_mode
+  consistencyMode: "consistent"
 
   # Volume size per replica
   volumeSize: "20Gi"

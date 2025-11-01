@@ -238,13 +238,22 @@ func (r *GarageClusterReconciler) reconcileConfigMap(ctx context.Context, gc *ga
 		rootDomain = gc.Spec.S3Api.RootDomain
 	}
 
-	replicationFactor := gc.Spec.ReplicationMode
+	// Default values matching Garage defaults
+	replicationFactor := int32(3)
+	if gc.Spec.ReplicationFactor > 0 {
+		replicationFactor = gc.Spec.ReplicationFactor
+	}
+
+	consistencyMode := "consistent"
+	if gc.Spec.ConsistencyMode != "" {
+		consistencyMode = gc.Spec.ConsistencyMode
+	}
 
 	configData := fmt.Sprintf(`metadata_dir = "/mnt/meta"
 data_dir = "/mnt/data"
 db_engine = "sqlite"
-replication_factor = %s
-consistency_mode = "consistent"
+replication_factor = %d
+consistency_mode = "%s"
 
 rpc_bind_addr = "[::]:3901"
 rpc_secret_file = "/etc/garage/rpc-secret"
@@ -263,7 +272,7 @@ root_domain = "%s"
 
 [admin]
 api_bind_addr = "[::]:3903"
-`, replicationFactor, gc.Name, gc.Namespace, region, rootDomain)
+`, replicationFactor, consistencyMode, gc.Name, gc.Namespace, region, rootDomain)
 
 	cm := &corev1.ConfigMap{
 		ObjectMeta: metav1.ObjectMeta{
@@ -812,7 +821,7 @@ func (r *GarageClusterReconciler) updateConditions(ctx context.Context, gc *gara
 	// A degraded cluster is still operational, just not fully optimal
 	isOperational := health.Status == "healthy" || health.Status == "degraded"
 	clusterReady := podsReady && layoutReady && isOperational
-	
+
 	var readyMessage string
 	if health.Status == "healthy" {
 		readyMessage = "Cluster is fully operational"

@@ -23,15 +23,27 @@ import (
 
 // GarageClusterSpec defines the desired state of GarageCluster
 type GarageClusterSpec struct {
-	// ReplicaCount is the number of Garage replicas
+	// ReplicaCount is the number of Garage pod replicas in the StatefulSet
 	// +kubebuilder:validation:Minimum=1
 	// +kubebuilder:validation:Required
 	ReplicaCount int32 `json:"replicaCount"`
 
-	// ReplicationMode defines how data is replicated ("1", "2", or "3")
-	// +kubebuilder:validation:Enum="1";"2";"3"
-	// +kubebuilder:validation:Required
-	ReplicationMode string `json:"replicationMode"`
+	// ReplicationFactor is the number of copies of data that will be stored in the cluster
+	// See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#replication_factor
+	// +kubebuilder:validation:Minimum=1
+	// +kubebuilder:default=3
+	// +optional
+	ReplicationFactor int32 `json:"replicationFactor,omitempty"`
+
+	// ConsistencyMode defines the consistency mode for Garage
+	// - consistent: full consistency (n out of n nodes must respond)
+	// - degraded: degraded consistency (n/2 + 1 out of n nodes must respond)
+	// - dangerous: no consistency check (1 out of n nodes must respond)
+	// See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#consistency_mode
+	// +kubebuilder:validation:Enum=consistent;degraded;dangerous
+	// +kubebuilder:default=consistent
+	// +optional
+	ConsistencyMode string `json:"consistencyMode,omitempty"`
 
 	// VolumeSize is the size of persistent volumes
 	// +kubebuilder:default="20Gi"
@@ -127,10 +139,12 @@ type GarageClusterStatus struct {
 // +kubebuilder:object:root=true
 // +kubebuilder:subresource:status
 // +kubebuilder:printcolumn:name="Replicas",type=integer,JSONPath=`.spec.replicaCount`
-// +kubebuilder:printcolumn:name="Replication",type=string,JSONPath=`.spec.replicationMode`
+// +kubebuilder:printcolumn:name="RF",type=integer,JSONPath=`.spec.replicationFactor`
+// +kubebuilder:printcolumn:name="Consistency",type=string,JSONPath=`.spec.consistencyMode`
 // +kubebuilder:printcolumn:name="Ready",type=integer,JSONPath=`.status.readyReplicas`
 // +kubebuilder:printcolumn:name="Phase",type=string,JSONPath=`.status.phase`
 // +kubebuilder:printcolumn:name="Age",type=date,JSONPath=`.metadata.creationTimestamp`
+// +kubebuilder:validation:XValidation:rule="!has(self.spec.replicationFactor) || self.spec.replicationFactor <= self.spec.replicaCount",message="replicationFactor cannot be greater than replicaCount"
 
 // GarageCluster is the Schema for the garageclusters API
 type GarageCluster struct {
