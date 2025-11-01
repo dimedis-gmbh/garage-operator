@@ -135,32 +135,8 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
-	// Configure layout if not done yet
-	if garageCluster.Status.LayoutVersion == 0 {
-		r.updateStatus(ctx, garageCluster, "LayoutConfiguring", "Configuring cluster layout")
-
-		// Create LayoutManager
-		config := ctrl.GetConfigOrDie()
-		layoutMgr, err := NewLayoutManager(config)
-		if err != nil {
-			logger.Error(err, "Failed to create LayoutManager")
-			r.updateStatus(ctx, garageCluster, "Failed", "LayoutManager creation failed: "+err.Error())
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
-		}
-
-		if err := layoutMgr.ConfigureLayout(ctx, garageCluster); err != nil {
-			logger.Error(err, "Failed to configure layout")
-			r.updateStatus(ctx, garageCluster, "Failed", "Layout configuration failed: "+err.Error())
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
-		}
-
-		garageCluster.Status.LayoutVersion = 1
-		if err := r.Status().Update(ctx, garageCluster); err != nil {
-			return ctrl.Result{}, err
-		}
-	}
-
 	// Update status to Ready
+	// Note: Garage handles cluster layout automatically via Kubernetes Discovery
 	garageCluster.Status.S3Endpoint = fmt.Sprintf("http://%s.%s.svc.cluster.local:3900",
 		garageCluster.Name, garageCluster.Namespace)
 	r.updateStatus(ctx, garageCluster, "Ready", "Cluster is operational")

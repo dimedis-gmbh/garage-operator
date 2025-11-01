@@ -103,7 +103,7 @@ type IngressConfig struct {
 // GarageClusterStatus defines the observed state of GarageCluster
 type GarageClusterStatus struct {
 	// Phase represents the current phase of the cluster
-	// +kubebuilder:validation:Enum=Pending;Deploying;LayoutConfiguring;Ready;Failed
+	// +kubebuilder:validation:Enum=Pending;Deploying;Ready;Failed
 	// +optional
 	Phase string `json:"phase,omitempty"`
 
@@ -115,32 +115,9 @@ type GarageClusterStatus struct {
 	// +optional
 	ReadyReplicas int32 `json:"readyReplicas,omitempty"`
 
-	// Nodes contains information about cluster nodes
-	// +optional
-	Nodes []GarageNode `json:"nodes,omitempty"`
-
 	// S3Endpoint is the internal S3 API endpoint
 	// +optional
 	S3Endpoint string `json:"s3Endpoint,omitempty"`
-
-	// LayoutVersion is the current layout version
-	// +optional
-	LayoutVersion int32 `json:"layoutVersion,omitempty"`
-}
-
-// GarageNode represents a node in the Garage cluster
-type GarageNode struct {
-	// ID is the unique identifier of the node
-	ID string `json:"id"`
-
-	// Zone is the zone/datacenter of the node
-	Zone string `json:"zone"`
-
-	// Capacity is the storage capacity assigned to the node
-	Capacity string `json:"capacity"`
-
-	// Status is the current status of the node
-	Status string `json:"status"`
 }
 
 // +kubebuilder:object:root=true

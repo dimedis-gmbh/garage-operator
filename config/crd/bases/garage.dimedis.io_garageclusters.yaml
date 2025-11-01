@@ -239,41 +239,11 @@ spec:
                   - type
                   type: object
                 type: array
-              layoutVersion:
-                description: LayoutVersion is the current layout version
-                format: int32
-                type: integer
-              nodes:
-                description: Nodes contains information about cluster nodes
-                items:
-                  description: GarageNode represents a node in the Garage cluster
-                  properties:
-                    capacity:
-                      description: Capacity is the storage capacity assigned to the
-                        node
-                      type: string
-                    id:
-                      description: ID is the unique identifier of the node
-                      type: string
-                    status:
-                      description: Status is the current status of the node
-                      type: string
-                    zone:
-                      description: Zone is the zone/datacenter of the node
-                      type: string
-                  required:
-                  - capacity
-                  - id
-                  - status
-                  - zone
-                  type: object
-                type: array
               phase:
                 description: Phase represents the current phase of the cluster
                 enum:
                 - Pending
                 - Deploying
-                - LayoutConfiguring
                 - Ready
                 - Failed
                 type: string
