@@ -27,6 +27,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	networkingv1 "k8s.io/api/networking/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -66,6 +67,7 @@ type GarageClusterReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=endpoints,verbs=get;list;watch
+// +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
@@ -126,6 +128,13 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err := r.reconcileService(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile Service")
 		r.updateStatus(ctx, garageCluster, "Failed", "Service reconciliation failed: "+err.Error())
+		return ctrl.Result{}, err
+	}
+
+	// Reconcile Ingress
+	if err := r.reconcileIngress(ctx, garageCluster); err != nil {
+		logger.Error(err, "Failed to reconcile Ingress")
+		r.updateStatus(ctx, garageCluster, "Failed", "Ingress reconciliation failed: "+err.Error())
 		return ctrl.Result{}, err
 	}
 
@@ -378,6 +387,96 @@ func (r *GarageClusterReconciler) reconcileService(ctx context.Context, gc *gara
 			return r.Update(ctx, found)
 		}
 		return nil
+	}
+	return err
+}
+
+func (r *GarageClusterReconciler) reconcileIngress(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
+	// If ingress is not enabled or not configured, delete any existing ingress
+	if gc.Spec.Ingress == nil || !gc.Spec.Ingress.Enabled {
+		ingress := &networkingv1.Ingress{}
+		err := r.Get(ctx, types.NamespacedName{Name: gc.Name, Namespace: gc.Namespace}, ingress)
+		if err == nil {
+			// Ingress exists but should not, delete it
+			return r.Delete(ctx, ingress)
+		}
+		if errors.IsNotFound(err) {
+			// Ingress doesn't exist, which is correct
+			return nil
+		}
+		return err
+	}
+
+	// Build ingress spec
+	pathTypePrefix := networkingv1.PathTypePrefix
+	ingress := &networkingv1.Ingress{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        gc.Name,
+			Namespace:   gc.Namespace,
+			Annotations: gc.Spec.Ingress.Annotations,
+		},
+		Spec: networkingv1.IngressSpec{
+			Rules: []networkingv1.IngressRule{
+				{
+					Host: gc.Spec.Ingress.Host,
+					IngressRuleValue: networkingv1.IngressRuleValue{
+						HTTP: &networkingv1.HTTPIngressRuleValue{
+							Paths: []networkingv1.HTTPIngressPath{
+								{
+									Path:     "/",
+									PathType: &pathTypePrefix,
+									Backend: networkingv1.IngressBackend{
+										Service: &networkingv1.IngressServiceBackend{
+											Name: gc.Name,
+											Port: networkingv1.ServiceBackendPort{
+												Name: "s3-api",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+
+	// Add IngressClassName if specified
+	if gc.Spec.Ingress.ClassName != "" {
+		ingress.Spec.IngressClassName = &gc.Spec.Ingress.ClassName
+	}
+
+	// Add TLS configuration if enabled
+	if gc.Spec.Ingress.TLS != nil && gc.Spec.Ingress.TLS.Enabled {
+		secretName := gc.Name + "-tls"
+		if gc.Spec.Ingress.TLS.SecretName != "" {
+			secretName = gc.Spec.Ingress.TLS.SecretName
+		}
+
+		ingress.Spec.TLS = []networkingv1.IngressTLS{
+			{
+				Hosts:      []string{gc.Spec.Ingress.Host},
+				SecretName: secretName,
+			},
+		}
+	}
+
+	if err := controllerutil.SetControllerReference(gc, ingress, r.Scheme); err != nil {
+		return err
+	}
+
+	found := &networkingv1.Ingress{}
+	err := r.Get(ctx, types.NamespacedName{Name: ingress.Name, Namespace: ingress.Namespace}, found)
+	if err != nil && errors.IsNotFound(err) {
+		log.FromContext(ctx).Info("Creating new Ingress")
+		return r.Create(ctx, ingress)
+	} else if err == nil {
+		// Update existing ingress
+		found.Annotations = ingress.Annotations
+		found.Spec = ingress.Spec
+		log.FromContext(ctx).Info("Updating Ingress")
+		return r.Update(ctx, found)
 	}
 	return err
 }
@@ -920,6 +1019,7 @@ func (r *GarageClusterReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Owns(&corev1.Service{}).
 		Owns(&corev1.ConfigMap{}).
 		Owns(&corev1.Secret{}).
+		Owns(&networkingv1.Ingress{}).
 		Complete(r)
 }
 

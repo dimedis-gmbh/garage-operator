@@ -123,13 +123,24 @@ type IngressConfig struct {
 	// +optional
 	Host string `json:"host,omitempty"`
 
-	// TLS enabled
+	// TLS configuration
 	// +optional
-	TLS bool `json:"tls,omitempty"`
+	TLS *IngressTLSConfig `json:"tls,omitempty"`
 
 	// Annotations for the ingress
 	// +optional
 	Annotations map[string]string `json:"annotations,omitempty"`
+}
+
+// IngressTLSConfig defines TLS settings for ingress
+type IngressTLSConfig struct {
+	// Enabled determines if TLS is enabled
+	// +optional
+	Enabled bool `json:"enabled,omitempty"`
+
+	// SecretName is the name of the TLS secret
+	// +optional
+	SecretName string `json:"secretName,omitempty"`
 }
 
 // GarageClusterStatus defines the observed state of GarageCluster

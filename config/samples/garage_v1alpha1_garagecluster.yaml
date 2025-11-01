@@ -50,3 +50,15 @@ spec:
     limits:
       cpu: "1000m"
       memory: "1Gi"
+
+  # Ingress configuration
+  ingress:
+    enabled: true
+    className: "nginx"
+    host: "garage.127-0-0-4.nip.io"
+    tls:
+      enabled: true
+      secretName: "garage-tls"
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt-prod
+      kubernetes.io/tls-acme: "true"

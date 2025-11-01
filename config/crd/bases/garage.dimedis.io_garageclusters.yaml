@@ -95,8 +95,15 @@ spec:
                     description: Host for the ingress
                     type: string
                   tls:
-                    description: TLS enabled
-                    type: boolean
+                    description: TLS configuration
+                    properties:
+                      enabled:
+                        description: Enabled determines if TLS is enabled
+                        type: boolean
+                      secretName:
+                        description: SecretName is the name of the TLS secret
+                        type: string
+                    type: object
                 type: object
               persistence:
                 description: Persistence configuration for data and metadata volumes
