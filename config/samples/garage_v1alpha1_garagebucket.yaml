@@ -11,14 +11,14 @@ spec:
   bucketName: my-app-data
 
   # Make bucket publicly readable
-  publicRead: false
+  publicRead: true
 
   # Enable object versioning
   versioning: false
 
   # Optional: Set quotas
   quotas:
-    maxSize: "100Gi"
+    maxSize: "50Gi"
     maxObjects: 1000000
 
   # Optional: Enable static website hosting
