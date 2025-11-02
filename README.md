@@ -175,7 +175,6 @@ spec:
 | `clusterRef`    | ClusterReference | Yes      | -             | Reference to GarageCluster                     |
 | `bucketName`    | string           | No       | metadata.name | Name of the bucket (DNS-compliant, 3-63 chars) |
 | `publicRead`    | bool             | No       | false         | Make bucket publicly readable                  |
-| `versioning`    | bool             | No       | false         | Enable object versioning                       |
 | `quotas`        | BucketQuotas     | No       | -             | Size and object count limits                   |
 | `websiteConfig` | WebsiteConfig    | No       | -             | Static website hosting configuration           |
 | `keys`          | []BucketKey      | No       | -             | Access keys with permissions                   |

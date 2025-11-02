@@ -47,11 +47,6 @@ type GarageBucketSpec struct {
 	// +optional
 	WebsiteConfig *WebsiteConfig `json:"websiteConfig,omitempty"`
 
-	// Versioning enables object versioning for this bucket
-	// +kubebuilder:default=false
-	// +optional
-	Versioning bool `json:"versioning,omitempty"`
-
 	// Keys defines access keys for this bucket
 	// +optional
 	Keys []BucketKey `json:"keys,omitempty"`

@@ -13,9 +13,6 @@ spec:
   # Make bucket publicly readable
   publicRead: true
 
-  # Enable object versioning
-  versioning: false
-
   # Optional: Set quotas
   quotas:
     maxSize: "50Gi"

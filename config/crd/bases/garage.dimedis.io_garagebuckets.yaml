@@ -156,10 +156,6 @@ spec:
                       Examples: "100Gi", "1Ti"
                     type: string
                 type: object
-              versioning:
-                default: false
-                description: Versioning enables object versioning for this bucket
-                type: boolean
               websiteConfig:
                 description: WebsiteConfig enables static website hosting for this
                   bucket
