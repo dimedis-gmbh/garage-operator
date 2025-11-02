@@ -1,0 +1,49 @@
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: kind
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.34.0
+    extraMounts:
+      - hostPath: .ssl/root-ca.pem
+        containerPath: /opt/ca-certificates/root-ca.pem
+        readOnly: true
+    kubeadmConfigPatches:
+      - |
+        kind: InitConfiguration
+        nodeRegistration:
+          kubeletExtraArgs:
+            node-labels: "ingress-ready=true"
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 80
+        listenAddress: 127.0.0.4
+        protocol: TCP
+      - containerPort: 443
+        hostPort: 443
+        listenAddress: 127.0.0.4
+        protocol: TCP
+  - role: worker
+    image: kindest/node:v1.34.0
+    extraMounts:
+      - hostPath: .ssl/root-ca.pem
+        containerPath: /opt/ca-certificates/root-ca.pem
+        readOnly: true
+  - role: worker
+    image: kindest/node:v1.34.0
+    extraMounts:
+      - hostPath: .ssl/root-ca.pem
+        containerPath: /opt/ca-certificates/root-ca.pem
+        readOnly: true
+  - role: worker
+    image: kindest/node:v1.34.0
+    extraMounts:
+      - hostPath: .ssl/root-ca.pem
+        containerPath: /opt/ca-certificates/root-ca.pem
+        readOnly: true
+  - role: worker
+    image: kindest/node:v1.34.0
+    extraMounts:
+      - hostPath: .ssl/root-ca.pem
+        containerPath: /opt/ca-certificates/root-ca.pem
+        readOnly: true
