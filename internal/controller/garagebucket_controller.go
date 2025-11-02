@@ -216,7 +216,7 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		}
 	} else {
 		logger.V(1).Info("Status unchanged, skipping update")
-	}	// No automatic requeue - controller will only run on changes to the GarageBucket resource
+	} // No automatic requeue - controller will only run on changes to the GarageBucket resource
 	logger.Info("Reconciliation complete")
 	return ctrl.Result{}, nil
 }
@@ -397,17 +397,17 @@ func (r *GarageBucketReconciler) reconcileDelete(ctx context.Context, bucket *ga
 
 		// Get cluster
 		cluster, err := r.getCluster(ctx, bucket)
-	if err == nil && cluster.Status.Phase == "Ready" {
-		// Get REST config
-		config, err := ctrl.GetConfig()
-		if err == nil {
-			// Create bucket manager
-			bucketMgr, err := NewBucketManager(config, cluster, logger)
+		if err == nil && cluster.Status.Phase == "Ready" {
+			// Get REST config
+			config, err := ctrl.GetConfig()
 			if err == nil {
-				// Delete keys
-				for _, keyStatus := range bucket.Status.Keys {
-					if err := bucketMgr.DeleteKey(ctx, keyStatus.KeyID); err != nil {
-						logger.Error(err, "Failed to delete key", "keyID", keyStatus.KeyID)
+				// Create bucket manager
+				bucketMgr, err := NewBucketManager(config, cluster, logger)
+				if err == nil {
+					// Delete keys
+					for _, keyStatus := range bucket.Status.Keys {
+						if err := bucketMgr.DeleteKey(ctx, keyStatus.KeyID); err != nil {
+							logger.Error(err, "Failed to delete key", "keyID", keyStatus.KeyID)
 						}
 
 						// Delete secret if in same namespace
