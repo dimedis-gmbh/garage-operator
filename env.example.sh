@@ -1,0 +1,4 @@
+export DOCKER_REPO_HOST=docker.io
+export DOCKER_REPO_USER=dimedis-gmbh
+export DOCKER_REPO_PASS=SUPER-SECRET-PASSWORD
+
