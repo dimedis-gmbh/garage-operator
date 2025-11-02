@@ -9,11 +9,14 @@ This operator automates the deployment and management of Garage Object Storage c
 Key features:
 
 - Automated cluster deployment and configuration
-- Pod anti-affinity for high availability
 - Automatic layout management with zone assignment
+- Pod anti-affinity for high availability
 - S3 API endpoint configuration
 - Resource management and monitoring
 - Ingress support with TLS
+- Declarative bucket provisioning with GarageBucket CRD
+- Automated access key management with Kubernetes Secrets
+- Bucket quotas and website hosting support
 
 ## Getting Started
 
@@ -138,16 +141,90 @@ spec:
 
 ## Configuration Options
 
-| Field             | Type   | Required | Default        | Description                            |
-| ----------------- | ------ | -------- | -------------- | -------------------------------------- |
-| `replicaCount`    | int32  | Yes      | -              | Number of Garage replicas (minimum 1)  |
-| `replicationMode` | string | Yes      | -              | Replication mode: "1", "2", or "3"     |
-| `volumeSize`      | string | No       | "20Gi"         | Size of persistent volumes per replica |
-| `storageClass`    | string | No       | default        | Storage class for persistent volumes   |
-| `rpcSecret`       | string | No       | auto-generated | RPC secret for cluster communication   |
-| `s3Api`           | object | No       | -              | S3 API configuration                   |
-| `ingress`         | object | No       | -              | Ingress configuration                  |
-| `resources`       | object | No       | -              | Resource requests and limits           |
+### GarageCluster Configuration
+
+| Field               | Type                 | Required | Default      | Description                                                |
+| ------------------- | -------------------- | -------- | ------------ | ---------------------------------------------------------- |
+| `replicaCount`      | int32                | Yes      | -            | Number of Garage pod replicas (minimum 1)                  |
+| `replicationFactor` | int32                | No       | 3            | Number of data copies stored in cluster                    |
+| `consistencyMode`   | string               | No       | "consistent" | Consistency mode: "consistent", "degraded", or "dangerous" |
+| `blockSize`         | string               | No       | "1Mi"        | Size of Garage data blocks                                 |
+| `persistence`       | PersistenceConfig    | No       | -            | Persistent volume configuration for data and meta          |
+| `s3Api`             | S3ApiConfig          | No       | -            | S3 API configuration                                       |
+| `ingress`           | IngressConfig        | No       | -            | Ingress configuration                                      |
+| `resources`         | ResourceRequirements | No       | -            | Resource requests and limits                               |
+
+#### PersistenceConfig
+
+| Field  | Type         | Required | Default | Description                   |
+| ------ | ------------ | -------- | ------- | ----------------------------- |
+| `data` | VolumeConfig | No       | -       | Data volume configuration     |
+| `meta` | VolumeConfig | No       | -       | Metadata volume configuration |
+
+#### VolumeConfig
+
+| Field          | Type   | Required | Default | Description                  |
+| -------------- | ------ | -------- | ------- | ---------------------------- |
+| `size`         | string | No       | "20Gi"  | Size of the volume           |
+| `storageClass` | string | No       | default | Storage class for the volume |
+
+### GarageBucket Configuration
+
+| Field           | Type             | Required | Default       | Description                                    |
+| --------------- | ---------------- | -------- | ------------- | ---------------------------------------------- |
+| `clusterRef`    | ClusterReference | Yes      | -             | Reference to GarageCluster                     |
+| `bucketName`    | string           | No       | metadata.name | Name of the bucket (DNS-compliant, 3-63 chars) |
+| `publicRead`    | bool             | No       | false         | Make bucket publicly readable                  |
+| `versioning`    | bool             | No       | false         | Enable object versioning                       |
+| `quotas`        | BucketQuotas     | No       | -             | Size and object count limits                   |
+| `websiteConfig` | WebsiteConfig    | No       | -             | Static website hosting configuration           |
+| `keys`          | []BucketKey      | No       | -             | Access keys with permissions                   |
+
+#### ClusterReference
+
+| Field       | Type   | Required | Default            | Description                    |
+| ----------- | ------ | -------- | ------------------ | ------------------------------ |
+| `name`      | string | Yes      | -                  | Name of the GarageCluster      |
+| `namespace` | string | No       | bucket's namespace | Namespace of the GarageCluster |
+
+#### BucketQuotas
+
+| Field        | Type   | Required | Default | Description                        |
+| ------------ | ------ | -------- | ------- | ---------------------------------- |
+| `maxSize`    | string | No       | -       | Maximum total size (e.g., "100Gi") |
+| `maxObjects` | int64  | No       | -       | Maximum number of objects          |
+
+#### WebsiteConfig
+
+| Field           | Type   | Required | Default      | Description            |
+| --------------- | ------ | -------- | ------------ | ---------------------- |
+| `enabled`       | bool   | No       | false        | Enable website hosting |
+| `indexDocument` | string | No       | "index.html" | Index document name    |
+| `errorDocument` | string | No       | -            | Error document name    |
+
+#### BucketKey Configuration
+
+| Field            | Type            | Required | Default | Description                           |
+| ---------------- | --------------- | -------- | ------- | ------------------------------------- |
+| `name`           | string          | No       | auto    | Name of the key                       |
+| `permissions`    | KeyPermissions  | Yes      | -       | Read, write, and owner permissions    |
+| `expirationDate` | Time            | No       | -       | When the key expires (RFC3339 format) |
+| `secretRef`      | SecretReference | No       | auto    | Where to store credentials            |
+
+#### KeyPermissions
+
+| Field   | Type | Required | Default | Description                                    |
+| ------- | ---- | -------- | ------- | ---------------------------------------------- |
+| `read`  | bool | No       | false   | Grant read access to the bucket                |
+| `write` | bool | No       | false   | Grant write access to the bucket               |
+| `owner` | bool | No       | false   | Grant ownership (deletion, permission changes) |
+
+#### SecretReference
+
+| Field       | Type   | Required | Default            | Description             |
+| ----------- | ------ | -------- | ------------------ | ----------------------- |
+| `name`      | string | Yes      | -                  | Name of the Secret      |
+| `namespace` | string | No       | bucket's namespace | Namespace of the Secret |
 
 ## Working with Garage
 
@@ -161,7 +238,186 @@ kubectl get garagecluster my-garage -o jsonpath='{.status.s3Endpoint}'
 kubectl port-forward svc/my-garage 3900:3900
 ```
 
-### Create buckets and keys
+### Provision buckets with GarageBucket
+
+Create a bucket with access keys declaratively:
+
+```bash
+kubectl apply -f - <<EOF
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageBucket
+metadata:
+  name: my-app-storage
+spec:
+  clusterRef:
+    name: my-garage
+  publicRead: false
+  quotas:
+    maxSize: "100Gi"
+    maxObjects: 1000000
+  keys:
+    - name: app-key
+      permissions:
+        read: true
+        write: true
+        owner: false
+    - name: admin-key
+      permissions:
+        read: true
+        write: true
+        owner: true
+EOF
+```
+
+#### Understanding the generated Secrets
+
+For each key defined in the `keys` array, the operator automatically creates a Kubernetes Secret containing the S3 credentials. The secret is created with the naming pattern `<bucket-name>-<key-name>` (unless a custom `secretRef` is specified).
+
+**Secret structure:**
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: my-app-storage-app-key
+  namespace: default
+  ownerReferences:
+    - apiVersion: garage.dimedis.io/v1alpha1
+      kind: GarageBucket
+      name: my-app-storage
+      # ... (ensures secret is deleted when bucket is deleted)
+type: Opaque
+data:
+  accessKeyId: R0s... # Base64 encoded Garage access key ID
+  secretAccessKey: Y2F... # Base64 encoded Garage secret access key
+  bucket: bXktYXBwLXN0b3JhZ2U= # Base64 encoded bucket name
+  endpoint: aHR0cDovL215LWdhcmFnZTo5MDAw # Base64 encoded S3 endpoint URL
+```
+
+**Secret fields:**
+
+| Field             | Description                          | Example Value                         |
+| ----------------- | ------------------------------------ | ------------------------------------- |
+| `accessKeyId`     | Garage S3 access key ID              | `GK5a8f9b2c1d3e4f5a6b7c8d9e0f1a2b`    |
+| `secretAccessKey` | Garage S3 secret access key          | `7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f...` |
+| `bucket`          | Name of the bucket                   | `my-app-storage`                      |
+| `endpoint`        | S3 endpoint URL of the GarageCluster | `http://my-garage:9000`               |
+
+#### Using the Secret in applications
+
+Mount the secret in your application pod:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  containers:
+    - name: app
+      image: my-app:latest
+      env:
+        - name: AWS_ACCESS_KEY_ID
+          valueFrom:
+            secretKeyRef:
+              name: my-app-storage-app-key
+              key: accessKeyId
+        - name: AWS_SECRET_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: my-app-storage-app-key
+              key: secretAccessKey
+        - name: S3_BUCKET
+          valueFrom:
+            secretKeyRef:
+              name: my-app-storage-app-key
+              key: bucket
+        - name: S3_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: my-app-storage-app-key
+              key: endpoint
+```
+
+Or mount as files:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: my-app
+spec:
+  containers:
+    - name: app
+      image: my-app:latest
+      volumeMounts:
+        - name: s3-credentials
+          mountPath: /etc/s3
+          readOnly: true
+  volumes:
+    - name: s3-credentials
+      secret:
+        secretName: my-app-storage-app-key
+```
+
+#### Access the credentials via CLI
+
+```bash
+# Get access key ID and secret
+kubectl get secret my-app-storage-app-key -o jsonpath='{.data.accessKeyId}' | base64 -d
+kubectl get secret my-app-storage-app-key -o jsonpath='{.data.secretAccessKey}' | base64 -d
+
+# Get all credentials at once
+kubectl get secret my-app-storage-app-key -o json | jq -r '.data | map_values(@base64d)'
+
+# Export for use with AWS CLI
+export AWS_ACCESS_KEY_ID=$(kubectl get secret my-app-storage-app-key -o jsonpath='{.data.accessKeyId}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl get secret my-app-storage-app-key -o jsonpath='{.data.secretAccessKey}' | base64 -d)
+export AWS_ENDPOINT_URL=$(kubectl get secret my-app-storage-app-key -o jsonpath='{.data.endpoint}' | base64 -d)
+
+# Test access
+aws s3 ls --endpoint-url=$AWS_ENDPOINT_URL
+```
+
+#### Key expiration and rotation
+
+When a key's `expirationDate` is changed in the GarageBucket spec, the operator will automatically:
+
+1. Delete the old key in Garage
+2. Create a new key with the updated expiration date
+3. Update the Secret with the new credentials
+
+**Important:** This means the `accessKeyId` and `secretAccessKey` values will change! Applications using these credentials must be restarted to pick up the new values.
+
+**Example of updating expiration:**
+
+```bash
+# Update the expiration date
+kubectl patch garagebucket my-app-storage --type='json' -p='[
+  {
+    "op": "replace",
+    "path": "/spec/keys/0/expirationDate",
+    "value": "2027-12-31T23:59:59Z"
+  }
+]'
+
+# Watch the operator recreate the key
+kubectl logs -n garage-operator-system -l control-plane=controller-manager -f
+
+# Applications need to be restarted to get new credentials
+kubectl rollout restart deployment/my-app
+```
+
+**Best practices for key rotation:**
+
+- Use Kubernetes Deployment restarts or similar mechanisms to ensure applications pick up new credentials
+- Consider using init containers or sidecar patterns that regularly reload credentials
+- Monitor key expiration dates in the GarageBucket status:
+  ```bash
+  kubectl get garagebucket my-app-storage -o jsonpath='{.status.keys[*].expirationDate}'
+  ```
+
+### Create buckets and keys manually
 
 ```bash
 # Execute commands in garage pod
@@ -169,6 +425,73 @@ kubectl exec my-garage-0 -- ./garage status
 kubectl exec my-garage-0 -- ./garage bucket create my-bucket
 kubectl exec my-garage-0 -- ./garage key create my-key
 kubectl exec my-garage-0 -- ./garage bucket allow --read --write my-bucket --key my-key
+```
+
+## GarageBucket Examples
+
+### Simple Application Bucket
+
+```yaml
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageBucket
+metadata:
+  name: myapp-data
+spec:
+  clusterRef:
+    name: production-garage
+  keys:
+    - name: app
+      permissions:
+        read: true
+        write: true
+```
+
+### Public Static Website
+
+```yaml
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageBucket
+metadata:
+  name: company-website
+spec:
+  clusterRef:
+    name: production-garage
+  publicRead: true
+  websiteConfig:
+    enabled: true
+    indexDocument: "index.html"
+    errorDocument: "404.html"
+  keys:
+    - name: deployer
+      permissions:
+        read: true
+        write: true
+        owner: true
+```
+
+### Multi-Tenant with Quotas
+
+```yaml
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageBucket
+metadata:
+  name: tenant-acme
+spec:
+  clusterRef:
+    name: shared-garage
+  quotas:
+    maxSize: "500Gi"
+    maxObjects: 5000000
+  keys:
+    - name: admin
+      permissions:
+        read: true
+        write: true
+        owner: true
+    - name: readonly
+      permissions:
+        read: true
+      expirationDate: "2025-12-31T23:59:59Z"
 ```
 
 ## Development
@@ -235,6 +558,53 @@ Check operator logs and manually configure if needed:
 ```bash
 kubectl logs -n garage-operator-system deployment/garage-operator-controller-manager
 kubectl exec my-garage-0 -- ./garage status
+```
+
+### GarageBucket not ready
+
+Check the bucket status and controller logs:
+
+```bash
+kubectl describe garagebucket my-app-storage
+kubectl logs -n garage-operator-system deployment/garage-operator-controller-manager | grep GarageBucket
+```
+
+Check if referenced cluster is ready:
+
+```bash
+kubectl get garagecluster my-garage
+kubectl describe garagecluster my-garage
+```
+
+Verify secrets were created:
+
+```bash
+kubectl get secrets | grep my-app-storage
+kubectl describe secret my-app-storage-app-key
+```
+
+### Bucket access denied
+
+Check key permissions in bucket status:
+
+```bash
+kubectl get garagebucket my-app-storage -o jsonpath='{.status.keys}' | jq
+```
+
+Verify credentials in secret:
+
+```bash
+kubectl get secret my-app-storage-app-key -o jsonpath='{.data.accessKeyId}' | base64 -d
+```
+
+Test access with AWS CLI:
+
+```bash
+export AWS_ACCESS_KEY_ID=$(kubectl get secret my-app-storage-app-key -o jsonpath='{.data.accessKeyId}' | base64 -d)
+export AWS_SECRET_ACCESS_KEY=$(kubectl get secret my-app-storage-app-key -o jsonpath='{.data.secretAccessKey}' | base64 -d)
+export AWS_ENDPOINT_URL=$(kubectl get garagecluster my-garage -o jsonpath='{.status.s3Endpoint}')
+
+aws s3 ls --endpoint-url=$AWS_ENDPOINT_URL
 ```
 
 ### To Uninstall
