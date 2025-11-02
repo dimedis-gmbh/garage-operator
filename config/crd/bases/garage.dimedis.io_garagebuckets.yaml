@@ -1,0 +1,311 @@
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.19.0
+  name: garagebuckets.garage.dimedis.io
+spec:
+  group: garage.dimedis.io
+  names:
+    kind: GarageBucket
+    listKind: GarageBucketList
+    plural: garagebuckets
+    shortNames:
+    - gbucket
+    - gbkt
+    singular: garagebucket
+  scope: Namespaced
+  versions:
+  - additionalPrinterColumns:
+    - jsonPath: .status.actualBucketName
+      name: Bucket
+      type: string
+    - jsonPath: .spec.clusterRef.name
+      name: Cluster
+      type: string
+    - jsonPath: .spec.publicRead
+      name: Public
+      type: boolean
+    - jsonPath: .status.keys[*].name
+      name: Keys
+      type: integer
+    - jsonPath: .status.phase
+      name: Phase
+      type: string
+    - jsonPath: .metadata.creationTimestamp
+      name: Age
+      type: date
+    name: v1alpha1
+    schema:
+      openAPIV3Schema:
+        description: GarageBucket is the Schema for the garagebuckets API
+        properties:
+          apiVersion:
+            description: |-
+              APIVersion defines the versioned schema of this representation of an object.
+              Servers should convert recognized schemas to the latest internal value, and
+              may reject unrecognized values.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#resources
+            type: string
+          kind:
+            description: |-
+              Kind is a string value representing the REST resource this object represents.
+              Servers may infer this from the endpoint the client submits requests to.
+              Cannot be updated.
+              In CamelCase.
+              More info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#types-kinds
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: GarageBucketSpec defines the desired state of GarageBucket
+            properties:
+              bucketName:
+                description: |-
+                  BucketName is the name of the bucket to create
+                  If not specified, the name of the GarageBucket resource will be used
+                maxLength: 63
+                minLength: 3
+                pattern: ^[a-z0-9][a-z0-9.-]*[a-z0-9]$
+                type: string
+              clusterRef:
+                description: ClusterRef references the GarageCluster where this bucket
+                  should be created
+                properties:
+                  name:
+                    description: Name of the GarageCluster
+                    type: string
+                  namespace:
+                    description: |-
+                      Namespace of the GarageCluster
+                      If not specified, the same namespace as the GarageBucket will be used
+                    type: string
+                required:
+                - name
+                type: object
+              keys:
+                description: Keys defines access keys for this bucket
+                items:
+                  description: BucketKey defines an access key for a bucket
+                  properties:
+                    expirationDate:
+                      description: ExpirationDate is the date when the key expires
+                        (RFC3339 format)
+                      format: date-time
+                      type: string
+                    name:
+                      description: |-
+                        Name is the name of the key
+                        If not specified, a name will be generated
+                      type: string
+                    permissions:
+                      description: Permissions defines the access permissions for
+                        this key
+                      properties:
+                        owner:
+                          default: false
+                          description: Owner grants ownership of the bucket (allows
+                            bucket deletion and permission changes)
+                          type: boolean
+                        read:
+                          default: false
+                          description: Read grants read access to the bucket
+                          type: boolean
+                        write:
+                          default: false
+                          description: Write grants write access to the bucket
+                          type: boolean
+                      type: object
+                    secretRef:
+                      description: |-
+                        SecretRef is the reference to the Secret where the key credentials will be stored
+                        If not specified, a Secret will be created with the name <bucket-name>-<key-name>
+                      properties:
+                        name:
+                          description: Name of the Secret
+                          type: string
+                        namespace:
+                          description: |-
+                            Namespace of the Secret
+                            If not specified, the same namespace as the GarageBucket will be used
+                          type: string
+                      required:
+                      - name
+                      type: object
+                  required:
+                  - permissions
+                  type: object
+                type: array
+              publicRead:
+                default: false
+                description: PublicRead determines if the bucket should be publicly
+                  readable
+                type: boolean
+              quotas:
+                description: Quotas for the bucket
+                properties:
+                  maxObjects:
+                    description: MaxObjects is the maximum number of objects in the
+                      bucket
+                    format: int64
+                    type: integer
+                  maxSize:
+                    description: |-
+                      MaxSize is the maximum total size of objects in the bucket
+                      Examples: "100Gi", "1Ti"
+                    type: string
+                type: object
+              versioning:
+                default: false
+                description: Versioning enables object versioning for this bucket
+                type: boolean
+              websiteConfig:
+                description: WebsiteConfig enables static website hosting for this
+                  bucket
+                properties:
+                  enabled:
+                    default: false
+                    description: Enabled determines if website hosting is enabled
+                    type: boolean
+                  errorDocument:
+                    description: ErrorDocument is the error document for the website
+                    type: string
+                  indexDocument:
+                    default: index.html
+                    description: IndexDocument is the index document for the website
+                    type: string
+                type: object
+            required:
+            - clusterRef
+            type: object
+          status:
+            description: GarageBucketStatus defines the observed state of GarageBucket
+            properties:
+              actualBucketName:
+                description: ActualBucketName is the actual name of the bucket in
+                  Garage
+                type: string
+              bucketID:
+                description: BucketID is the internal Garage bucket ID
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations
+                items:
+                  description: Condition contains details for one aspect of the current
+                    state of this API Resource.
+                  properties:
+                    lastTransitionTime:
+                      description: |-
+                        lastTransitionTime is the last time the condition transitioned from one status to another.
+                        This should be when the underlying condition changed.  If that is not known, then using the time when the API field changed is acceptable.
+                      format: date-time
+                      type: string
+                    message:
+                      description: |-
+                        message is a human readable message indicating details about the transition.
+                        This may be an empty string.
+                      maxLength: 32768
+                      type: string
+                    observedGeneration:
+                      description: |-
+                        observedGeneration represents the .metadata.generation that the condition was set based upon.
+                        For instance, if .metadata.generation is currently 12, but the .status.conditions[x].observedGeneration is 9, the condition is out of date
+                        with respect to the current state of the instance.
+                      format: int64
+                      minimum: 0
+                      type: integer
+                    reason:
+                      description: |-
+                        reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                        Producers of specific condition types may define expected values and meanings for this field,
+                        and whether the values are considered a guaranteed API.
+                        The value should be a CamelCase string.
+                        This field may not be empty.
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                      type: string
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      enum:
+                      - "True"
+                      - "False"
+                      - Unknown
+                      type: string
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+                      type: string
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  type: object
+                type: array
+              currentObjects:
+                description: CurrentObjects is the current number of objects in the
+                  bucket
+                format: int64
+                type: integer
+              currentSize:
+                description: CurrentSize is the current total size of objects in the
+                  bucket
+                type: string
+              keys:
+                description: Keys contains the status of created keys
+                items:
+                  description: KeyStatus represents the status of a bucket key
+                  properties:
+                    expirationDate:
+                      description: ExpirationDate is the expiration date of the key
+                      format: date-time
+                      type: string
+                    expired:
+                      description: Expired indicates if the key has expired
+                      type: boolean
+                    keyID:
+                      description: KeyID is the Garage access key ID
+                      type: string
+                    name:
+                      description: Name of the key
+                      type: string
+                    secretName:
+                      description: SecretName is the name of the Secret containing
+                        the key credentials
+                      type: string
+                    secretNamespace:
+                      description: SecretNamespace is the namespace of the Secret
+                      type: string
+                  required:
+                  - expired
+                  - keyID
+                  - name
+                  - secretName
+                  - secretNamespace
+                  type: object
+                type: array
+              phase:
+                description: Phase represents the current phase of the bucket
+                enum:
+                - Pending
+                - Creating
+                - Ready
+                - Failed
+                type: string
+              s3Endpoint:
+                description: S3Endpoint is the S3 endpoint URL for this bucket
+                type: string
+              websiteEndpoint:
+                description: WebsiteEndpoint is the website endpoint URL if website
+                  hosting is enabled
+                type: string
+            type: object
+        type: object
+    served: true
+    storage: true
+    subresources:
+      status: {}

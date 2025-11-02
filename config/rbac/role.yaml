@@ -71,6 +71,7 @@ rules:
 - apiGroups:
   - garage.dimedis.io
   resources:
+  - garagebuckets
   - garageclusters
   verbs:
   - create
@@ -83,12 +84,14 @@ rules:
 - apiGroups:
   - garage.dimedis.io
   resources:
+  - garagebuckets/finalizers
   - garageclusters/finalizers
   verbs:
   - update
 - apiGroups:
   - garage.dimedis.io
   resources:
+  - garagebuckets/status
   - garageclusters/status
   verbs:
   - get

@@ -1,0 +1,58 @@
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageBucket
+metadata:
+  name: my-app-bucket
+spec:
+  # Reference to the GarageCluster
+  clusterRef:
+    name: garagecluster-sample
+
+  # Bucket name (optional, defaults to metadata.name)
+  bucketName: my-app-data
+
+  # Make bucket publicly readable
+  publicRead: false
+
+  # Enable object versioning
+  versioning: false
+
+  # Optional: Set quotas
+  quotas:
+    maxSize: "100Gi"
+    maxObjects: 1000000
+
+  # Optional: Enable static website hosting
+  # websiteConfig:
+  #   enabled: true
+  #   indexDocument: "index.html"
+  #   errorDocument: "error.html"
+
+  # Access keys for this bucket
+  keys:
+    # Application key with read/write access
+    - name: app-key
+      permissions:
+        read: true
+        write: true
+        owner: false
+      # Optional: Store credentials in specific secret
+      # secretRef:
+      #   name: my-app-s3-credentials
+      #   namespace: default
+
+    # Admin key with full access
+    - name: admin-key
+      permissions:
+        read: true
+        write: true
+        owner: true
+      # Optional: Set expiration date (RFC3339 format)
+      expirationDate: "2026-12-01T23:59:59Z"
+
+    # Temporary read-only key
+    - name: readonly-key
+      permissions:
+        read: true
+        write: false
+        owner: false
+      expirationDate: "2025-12-31T23:59:59Z"

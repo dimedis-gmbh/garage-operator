@@ -17,7 +17,6 @@ limitations under the License.
 package controller
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"strings"
@@ -26,9 +25,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-	"k8s.io/client-go/kubernetes/scheme"
 	"k8s.io/client-go/rest"
-	"k8s.io/client-go/tools/remotecommand"
 
 	garagev1alpha1 "github.com/dimedis-gmbh/garage-operator/api/v1alpha1"
 )
@@ -53,6 +50,12 @@ func NewLayoutManager(config *rest.Config) (*LayoutManager, error) {
 
 // ConfigureLayout configures the Garage cluster layout
 func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
+	// Create GarageClient for this cluster
+	client, err := NewGarageClient(lm.config, gc)
+	if err != nil {
+		return fmt.Errorf("failed to create garage client: %w", err)
+	}
+
 	// Wait for all pods to be ready
 	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
 		podName := fmt.Sprintf("%s-%d", gc.Name, i)
@@ -89,15 +92,13 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	}
 
 	// Connect all nodes to each other from pod-0
-	podName := fmt.Sprintf("%s-0", gc.Name)
 	for i, node := range nodes {
 		if i == 0 {
 			// Skip connecting pod-0 to itself
 			continue
 		}
 
-		cmd := []string{"./garage", "node", "connect", node.address}
-		output, err := lm.execCommandWithOutput(ctx, gc.Namespace, podName, cmd)
+		output, err := client.ExecCommand(ctx, "node", "connect", node.address)
 		if err != nil {
 			return fmt.Errorf("failed to connect to node %s: %w, output: %s", node.address, err, output)
 		}
@@ -116,30 +117,24 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	for i, node := range nodes {
 		zone := fmt.Sprintf("z%d", i+1)
 
-		cmd := []string{
-			"./garage",
+		output, err := client.ExecCommand(ctx,
 			"layout",
 			"assign",
 			"-z", zone,
 			"-c", capacity,
 			node.id,
-		}
-
-		output, err := lm.execCommandWithOutput(ctx, gc.Namespace, podName, cmd)
+		)
 		if err != nil {
 			return fmt.Errorf("failed to assign layout for node %s: %w, output: %s", node.id, err, output)
 		}
 	}
 
 	// Apply layout
-	applyCmd := []string{
-		"./garage",
+	output, err := client.ExecCommand(ctx,
 		"layout",
 		"apply",
 		"--version", "1",
-	}
-
-	output, err := lm.execCommandWithOutput(ctx, gc.Namespace, podName, applyCmd)
+	)
 	if err != nil {
 		return fmt.Errorf("failed to apply layout: %w, output: %s", err, output)
 	}
@@ -149,12 +144,20 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 
 // getNodeID retrieves the node ID from a specific pod
 func (lm *LayoutManager) getNodeID(ctx context.Context, namespace, podName string) (string, error) {
-	cmd := []string{
-		"./garage",
-		"node", "id",
+	// Create a temporary GarageCluster reference for the client
+	tempCluster := &garagev1alpha1.GarageCluster{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      strings.Split(podName, "-")[0], // Extract cluster name from pod name
+			Namespace: namespace,
+		},
 	}
 
-	output, err := lm.execCommandWithOutput(ctx, namespace, podName, cmd)
+	client, err := NewGarageClient(lm.config, tempCluster)
+	if err != nil {
+		return "", fmt.Errorf("failed to create garage client: %w", err)
+	}
+
+	output, err := client.ExecCommandInPod(ctx, podName, "node", "id")
 	if err != nil {
 		return "", fmt.Errorf("failed to execute command: %w", err)
 	}
@@ -172,41 +175,6 @@ func (lm *LayoutManager) getNodeID(ctx context.Context, namespace, podName strin
 	}
 
 	return nodeID, nil
-}
-
-// execCommandWithOutput executes a command in a pod and returns its output
-func (lm *LayoutManager) execCommandWithOutput(ctx context.Context, namespace, podName string, cmd []string) (string, error) {
-	req := lm.clientset.CoreV1().RESTClient().
-		Post().
-		Resource("pods").
-		Namespace(namespace).
-		Name(podName).
-		SubResource("exec").
-		VersionedParams(&corev1.PodExecOptions{
-			Command:   cmd,
-			Container: "garage",
-			Stdin:     false,
-			Stdout:    true,
-			Stderr:    true,
-			TTY:       false,
-		}, scheme.ParameterCodec)
-
-	exec, err := remotecommand.NewSPDYExecutor(lm.config, "POST", req.URL())
-	if err != nil {
-		return "", fmt.Errorf("failed to create executor: %w", err)
-	}
-
-	var stdout, stderr bytes.Buffer
-	err = exec.StreamWithContext(ctx, remotecommand.StreamOptions{
-		Stdout: &stdout,
-		Stderr: &stderr,
-	})
-
-	if err != nil {
-		return stdout.String(), fmt.Errorf("command execution failed: %w, stderr: %s", err, stderr.String())
-	}
-
-	return stdout.String(), nil
 }
 
 // waitForPod waits for a pod to be ready

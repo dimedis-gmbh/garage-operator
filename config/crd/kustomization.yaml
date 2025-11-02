@@ -3,6 +3,7 @@
 # It should be run by config/default
 resources:
   - bases/garage.dimedis.io_garageclusters.yaml
+  - bases/garage.dimedis.io_garagebuckets.yaml
 # +kubebuilder:scaffold:crdkustomizeresource
 
 # patches:
