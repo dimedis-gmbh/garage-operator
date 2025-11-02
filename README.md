@@ -1,6 +1,6 @@
 # Garage Kubernetes Operator
 
-A Kubernetes operator for managing Garage Object Storage clusters, built with Kubebuilder.
+A Kubernetes operator for managing Garage Object Storage clusters, built with Kubebuilder and Claude AI using VS Code Agent.
 
 ## Description
 
