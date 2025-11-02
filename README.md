@@ -498,12 +498,12 @@ spec:
 ### Build and Test
 
 ```bash
-make test                    # Run tests
-make build                   # Build binary
-make fmt                     # Format code
-make vet                     # Run go vet
-make manifests              # Generate CRDs and RBAC
-make generate               # Generate code
+make test       # Run tests
+make build      # Build binary
+make fmt        # Format code
+make vet        # Run go vet
+make manifests  # Generate CRDs and RBAC
+make generate   # Generate code
 ```
 
 ### Deploy to cluster
