@@ -65,7 +65,7 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	}
 
 	// Handle deletion
-	if !bucket.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !bucket.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, bucket)
 	}
 
@@ -91,12 +91,14 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	logger.V(1).Info("Got cluster", "clusterPhase", cluster.Status.Phase)
 
 	// Check if cluster is ready
-	if cluster.Status.Phase != "Ready" {
+	if cluster.Status.Phase != phaseReady {
 		msg := fmt.Sprintf("Waiting for GarageCluster %s to be ready (current phase: %s)",
 			cluster.Name, cluster.Status.Phase)
 		logger.Info(msg)
 		r.updateStatus(ctx, bucket, "Pending", msg)
-		r.Status().Update(ctx, bucket)
+		if err := r.Status().Update(ctx, bucket); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 	logger.V(1).Info("Cluster is ready")
@@ -106,7 +108,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		logger.Error(err, "Failed to get REST config")
 		r.updateStatus(ctx, bucket, "Failed", "Failed to get REST config")
-		r.Status().Update(ctx, bucket)
+		if err := r.Status().Update(ctx, bucket); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 	logger.V(1).Info("Got REST config")
@@ -116,7 +120,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		logger.Error(err, "Failed to create BucketManager")
 		r.updateStatus(ctx, bucket, "Failed", "BucketManager creation failed: "+err.Error())
-		r.Status().Update(ctx, bucket)
+		if err := r.Status().Update(ctx, bucket); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 	logger.V(1).Info("Created BucketManager")
@@ -133,7 +139,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 	if err != nil {
 		logger.Error(err, "Failed to create bucket")
 		r.updateStatus(ctx, bucket, "Failed", "Bucket creation failed: "+err.Error())
-		r.Status().Update(ctx, bucket)
+		if err := r.Status().Update(ctx, bucket); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 1 * time.Minute}, nil
 	}
 	logger.V(1).Info("Created/verified bucket", "bucketID", bucketID)
@@ -151,7 +159,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := bucketMgr.SetPublicRead(ctx, bucketID, true); err != nil {
 			logger.Error(err, "Failed to set public read")
 			r.updateStatus(ctx, bucket, "Failed", "Failed to set public read: "+err.Error())
-			r.Status().Update(ctx, bucket)
+			if err := r.Status().Update(ctx, bucket); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		logger.V(1).Info("Public read configured")
@@ -163,7 +173,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := bucketMgr.SetQuotas(ctx, bucketID, bucket.Spec.Quotas); err != nil {
 			logger.Error(err, "Failed to set quotas")
 			r.updateStatus(ctx, bucket, "Failed", "Failed to set quotas: "+err.Error())
-			r.Status().Update(ctx, bucket)
+			if err := r.Status().Update(ctx, bucket); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		logger.V(1).Info("Quotas configured")
@@ -175,7 +187,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err := bucketMgr.ConfigureWebsite(ctx, bucketID, bucket.Spec.WebsiteConfig); err != nil {
 			logger.Error(err, "Failed to configure website")
 			r.updateStatus(ctx, bucket, "Failed", "Failed to configure website: "+err.Error())
-			r.Status().Update(ctx, bucket)
+			if err := r.Status().Update(ctx, bucket); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 
@@ -195,7 +209,9 @@ func (r *GarageBucketReconciler) Reconcile(ctx context.Context, req ctrl.Request
 		if err != nil {
 			logger.Error(err, "Failed to reconcile key", "keyName", keySpec.Name)
 			r.updateStatus(ctx, bucket, "Failed", "Key reconciliation failed: "+err.Error())
-			r.Status().Update(ctx, bucket)
+			if err := r.Status().Update(ctx, bucket); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
 		}
 		logger.V(1).Info("Key reconciled", "index", i, "keyName", keySpec.Name, "keyID", keyStatus.KeyID)
@@ -460,9 +476,11 @@ func (r *GarageBucketReconciler) reconcileDelete(ctx context.Context, bucket *ga
 	return ctrl.Result{}, nil
 }
 
-func (r *GarageBucketReconciler) updateStatus(ctx context.Context, bucket *garagev1alpha1.GarageBucket, phase, message string) {
+func (r *GarageBucketReconciler) updateStatus(ctx context.Context, bucket *garagev1alpha1.GarageBucket, phase, _ string) {
 	bucket.Status.Phase = phase
-	r.Status().Update(ctx, bucket)
+	if err := r.Status().Update(ctx, bucket); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to update status")
+	}
 }
 
 // SetupWithManager sets up the controller with the Manager.

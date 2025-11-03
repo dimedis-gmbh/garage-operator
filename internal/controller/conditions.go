@@ -22,17 +22,20 @@ import (
 
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	garagev1alpha1 "github.com/dimedis-gmbh/garage-operator/api/v1alpha1"
 )
 
-func (r *GarageClusterReconciler) updateStatus(ctx context.Context, gc *garagev1alpha1.GarageCluster, phase, message string) {
+func (r *GarageClusterReconciler) updateStatus(ctx context.Context, gc *garagev1alpha1.GarageCluster, phase string) {
 	gc.Status.Phase = phase
-	r.Status().Update(ctx, gc)
+	if err := r.Status().Update(ctx, gc); err != nil {
+		log.FromContext(ctx).Error(err, "Failed to update status")
+	}
 }
 
 // updateConditions updates the Kubernetes Conditions based on cluster health
-func (r *GarageClusterReconciler) updateConditions(ctx context.Context, gc *garagev1alpha1.GarageCluster, health *ClusterHealth, status *ClusterStatus, podsReady bool) {
+func (r *GarageClusterReconciler) updateConditions(_ context.Context, gc *garagev1alpha1.GarageCluster, health *ClusterHealth, status *ClusterStatus, podsReady bool) {
 	// PodsReady condition
 	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
 		Type:    "PodsReady",
@@ -89,7 +92,7 @@ func (r *GarageClusterReconciler) updateConditions(ctx context.Context, gc *gara
 	})
 
 	// Degraded condition - cluster is degraded if not all nodes/partitions are optimal
-	isDegraded := health.Status == "degraded"
+	isDegraded := health.Status == healthStatusDegraded
 	meta.SetStatusCondition(&gc.Status.Conditions, metav1.Condition{
 		Type:    "Degraded",
 		Status:  metav1.ConditionStatus(map[bool]string{true: "True", false: "False"}[isDegraded]),
@@ -99,15 +102,16 @@ func (r *GarageClusterReconciler) updateConditions(ctx context.Context, gc *gara
 
 	// Ready condition - cluster is ready if it can serve requests (healthy or degraded, but not unavailable)
 	// A degraded cluster is still operational, just not fully optimal
-	isOperational := health.Status == "healthy" || health.Status == "degraded"
+	isOperational := health.Status == healthStatusHealthy || health.Status == healthStatusDegraded
 	clusterReady := podsReady && layoutReady && isOperational
 
 	var readyMessage string
-	if health.Status == "healthy" {
+	switch health.Status {
+	case healthStatusHealthy:
 		readyMessage = "Cluster is fully operational"
-	} else if health.Status == "degraded" {
+	case healthStatusDegraded:
 		readyMessage = fmt.Sprintf("Cluster is operational but degraded (%d/%d nodes connected)", health.ConnectedNodes, health.StorageNodes)
-	} else {
+	default:
 		readyMessage = fmt.Sprintf("Cluster is unavailable: %s", health.Status)
 	}
 

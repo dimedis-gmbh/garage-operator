@@ -26,6 +26,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
+	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	garagev1alpha1 "github.com/dimedis-gmbh/garage-operator/api/v1alpha1"
 )
@@ -108,13 +109,13 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	time.Sleep(2 * time.Second)
 
 	// Determine capacity - use data volume size
-	capacity := "20Gi" // default
+	capacity := defaultStorageSize // default
 	if gc.Spec.Persistence != nil && gc.Spec.Persistence.Data != nil && gc.Spec.Persistence.Data.Size != "" {
 		capacity = gc.Spec.Persistence.Data.Size
 	}
 
 	// Determine layout mode
-	layoutMode := "zonePerNode"                    // default
+	layoutMode := layoutModeZonePerNode            // default
 	zoneNodeLabel := "topology.kubernetes.io/zone" // default
 	if gc.Spec.Layout != nil {
 		if gc.Spec.Layout.Mode != "" {
@@ -162,6 +163,8 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 
 // UpdateLayout updates the Garage cluster layout when scaling up
 func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
+	logger := log.FromContext(ctx)
+
 	// Create GarageClient for this cluster
 	client, err := NewGarageClient(lm.config, gc)
 	if err != nil {
@@ -190,7 +193,9 @@ func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.Ga
 	lines := strings.Split(output, "\n")
 	for _, line := range lines {
 		if strings.Contains(line, "Current cluster layout version:") {
-			fmt.Sscanf(line, "Current cluster layout version: %d", &currentLayoutVersion)
+			if _, err := fmt.Sscanf(line, "Current cluster layout version: %d", &currentLayoutVersion); err != nil {
+				logger.V(1).Info("Failed to parse layout version", "error", err)
+			}
 			break
 		}
 	}
@@ -214,7 +219,6 @@ func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.Ga
 		address string
 		index   int32
 	}
-	allNodes := make([]nodeInfo, 0, gc.Spec.ReplicaCount)
 	newNodes := make([]nodeInfo, 0)
 
 	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
@@ -228,15 +232,13 @@ func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.Ga
 		nodeAddress := fmt.Sprintf("%s@%s.%s.%s.svc.cluster.local:3901",
 			nodeID, podName, gc.Name, gc.Namespace)
 
-		info := nodeInfo{
-			id:      nodeID,
-			address: nodeAddress,
-			index:   i,
-		}
-		allNodes = append(allNodes, info)
-
 		// Check if this is a new node
 		if !existingNodes[nodeID] {
+			info := nodeInfo{
+				id:      nodeID,
+				address: nodeAddress,
+				index:   i,
+			}
 			newNodes = append(newNodes, info)
 		}
 	}
@@ -258,13 +260,13 @@ func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.Ga
 	time.Sleep(2 * time.Second)
 
 	// Determine capacity - use data volume size
-	capacity := "20Gi" // default
+	capacity := defaultStorageSize // default
 	if gc.Spec.Persistence != nil && gc.Spec.Persistence.Data != nil && gc.Spec.Persistence.Data.Size != "" {
 		capacity = gc.Spec.Persistence.Data.Size
 	}
 
 	// Determine layout mode
-	layoutMode := "zonePerNode"                    // default
+	layoutMode := layoutModeZonePerNode            // default
 	zoneNodeLabel := "topology.kubernetes.io/zone" // default
 	if gc.Spec.Layout != nil {
 		if gc.Spec.Layout.Mode != "" {
@@ -314,7 +316,7 @@ func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.Ga
 // isHexString checks if a string contains only hexadecimal characters
 func isHexString(s string) bool {
 	for _, c := range s {
-		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') && (c < 'A' || c > 'F') {
 			return false
 		}
 	}

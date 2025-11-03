@@ -37,6 +37,19 @@ import (
 
 const (
 	garageFinalizer = "garage.deuxfleurs.fr/finalizer"
+
+	// Phase constants
+	phaseReady = "Ready"
+
+	// Health status constants
+	healthStatusHealthy  = "healthy"
+	healthStatusDegraded = "degraded"
+
+	// Layout mode constants
+	layoutModeZonePerNode = "zonePerNode"
+
+	// Storage size constants
+	defaultStorageSize = "20Gi"
 )
 
 // GarageClusterReconciler reconciles a GarageCluster object
@@ -79,7 +92,7 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	// Handle deletion
-	if !garageCluster.ObjectMeta.DeletionTimestamp.IsZero() {
+	if !garageCluster.DeletionTimestamp.IsZero() {
 		return r.reconcileDelete(ctx, garageCluster)
 	}
 
@@ -94,42 +107,42 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Reconcile Secret
 	if err := r.reconcileSecret(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile Secret")
-		r.updateStatus(ctx, garageCluster, "Failed", "Secret reconciliation failed: "+err.Error())
+		r.updateStatus(ctx, garageCluster, "Failed")
 		return ctrl.Result{}, err
 	}
 
 	// Reconcile ConfigMap
 	if err := r.reconcileConfigMap(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile ConfigMap")
-		r.updateStatus(ctx, garageCluster, "Failed", "ConfigMap reconciliation failed: "+err.Error())
+		r.updateStatus(ctx, garageCluster, "Failed")
 		return ctrl.Result{}, err
 	}
 
 	// Reconcile ServiceAccount and RBAC
 	if err := r.reconcileServiceAccount(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile ServiceAccount")
-		r.updateStatus(ctx, garageCluster, "Failed", "ServiceAccount reconciliation failed: "+err.Error())
+		r.updateStatus(ctx, garageCluster, "Failed")
 		return ctrl.Result{}, err
 	}
 
 	// Reconcile Service
 	if err := r.reconcileService(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile Service")
-		r.updateStatus(ctx, garageCluster, "Failed", "Service reconciliation failed: "+err.Error())
+		r.updateStatus(ctx, garageCluster, "Failed")
 		return ctrl.Result{}, err
 	}
 
 	// Reconcile Ingress
 	if err := r.reconcileIngress(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile Ingress")
-		r.updateStatus(ctx, garageCluster, "Failed", "Ingress reconciliation failed: "+err.Error())
+		r.updateStatus(ctx, garageCluster, "Failed")
 		return ctrl.Result{}, err
 	}
 
 	// Reconcile StatefulSet
 	if err := r.reconcileStatefulSet(ctx, garageCluster); err != nil {
 		logger.Error(err, "Failed to reconcile StatefulSet")
-		r.updateStatus(ctx, garageCluster, "Failed", "StatefulSet reconciliation failed: "+err.Error())
+		r.updateStatus(ctx, garageCluster, "Failed")
 		return ctrl.Result{}, err
 	}
 
@@ -152,9 +165,12 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if !podsReady {
 		msg := fmt.Sprintf("Waiting for replicas: %d/%d ready",
 			sts.Status.ReadyReplicas, garageCluster.Spec.ReplicaCount)
-		r.updateStatus(ctx, garageCluster, "Deploying", msg)
+		logger.Info(msg)
+		r.updateStatus(ctx, garageCluster, "Deploying")
 		r.updateConditions(ctx, garageCluster, nil, nil, false)
-		r.Status().Update(ctx, garageCluster)
+		if err := r.Status().Update(ctx, garageCluster); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
@@ -162,36 +178,44 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	config, err := ctrl.GetConfig()
 	if err != nil {
 		logger.Error(err, "Failed to get REST config")
-		r.updateStatus(ctx, garageCluster, "Failed", "Failed to get REST config")
+		r.updateStatus(ctx, garageCluster, "Failed")
 		r.updateConditions(ctx, garageCluster, nil, nil, podsReady)
-		r.Status().Update(ctx, garageCluster)
+		if err := r.Status().Update(ctx, garageCluster); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 	}
 
 	// Configure layout if not done yet
 	if garageCluster.Status.LayoutVersion == 0 {
 		// Determine the layout mode to use
-		layoutMode := "zonePerNode" // default
+		layoutMode := layoutModeZonePerNode // default
 		if garageCluster.Spec.Layout != nil && garageCluster.Spec.Layout.Mode != "" {
 			layoutMode = garageCluster.Spec.Layout.Mode
 		}
 
-		r.updateStatus(ctx, garageCluster, "LayoutConfiguring", "Configuring cluster layout")
-		r.Status().Update(ctx, garageCluster)
+		r.updateStatus(ctx, garageCluster, "LayoutConfiguring")
+		if err := r.Status().Update(ctx, garageCluster); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 
 		// Create LayoutManager
 		layoutMgr, err := NewLayoutManager(config)
 		if err != nil {
 			logger.Error(err, "Failed to create LayoutManager")
-			r.updateStatus(ctx, garageCluster, "Failed", "LayoutManager creation failed: "+err.Error())
-			r.Status().Update(ctx, garageCluster)
+			r.updateStatus(ctx, garageCluster, "Failed")
+			if err := r.Status().Update(ctx, garageCluster); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
 		if err := layoutMgr.ConfigureLayout(ctx, garageCluster); err != nil {
 			logger.Error(err, "Failed to configure layout")
-			r.updateStatus(ctx, garageCluster, "Failed", "Layout configuration failed: "+err.Error())
-			r.Status().Update(ctx, garageCluster)
+			r.updateStatus(ctx, garageCluster, "Failed")
+			if err := r.Status().Update(ctx, garageCluster); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
@@ -205,7 +229,7 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		logger.Info("Layout configuration completed successfully", "mode", layoutMode)
 	} else {
 		// Layout already configured - validate that mode hasn't changed
-		currentMode := "zonePerNode" // default
+		currentMode := layoutModeZonePerNode // default
 		if garageCluster.Spec.Layout != nil && garageCluster.Spec.Layout.Mode != "" {
 			currentMode = garageCluster.Spec.Layout.Mode
 		}
@@ -213,16 +237,20 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		appliedMode := garageCluster.Status.AppliedLayoutMode
 		if appliedMode == "" {
 			// For backwards compatibility with clusters created before this feature
-			appliedMode = "zonePerNode"
+			appliedMode = layoutModeZonePerNode
 			garageCluster.Status.AppliedLayoutMode = appliedMode
-			r.Status().Update(ctx, garageCluster)
+			if err := r.Status().Update(ctx, garageCluster); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 		}
 
 		if currentMode != appliedMode {
 			errorMsg := fmt.Sprintf("Layout mode cannot be changed after initial configuration. Applied mode: %s, requested mode: %s", appliedMode, currentMode)
 			logger.Error(nil, errorMsg)
-			r.updateStatus(ctx, garageCluster, "Failed", errorMsg)
-			r.Status().Update(ctx, garageCluster)
+			r.updateStatus(ctx, garageCluster, "Failed")
+			if err := r.Status().Update(ctx, garageCluster); err != nil {
+				logger.Error(err, "Failed to update status")
+			}
 			return ctrl.Result{}, fmt.Errorf("layout mode cannot be changed: applied=%s, requested=%s", appliedMode, currentMode)
 		}
 
@@ -238,8 +266,10 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			// Try to update layout for new nodes (if any)
 			if err := layoutMgr.UpdateLayout(ctx, garageCluster); err != nil {
 				logger.Error(err, "Failed to update layout for scaled cluster")
-				r.updateStatus(ctx, garageCluster, "Failed", "Layout update failed: "+err.Error())
-				r.Status().Update(ctx, garageCluster)
+				r.updateStatus(ctx, garageCluster, "Failed")
+				if err := r.Status().Update(ctx, garageCluster); err != nil {
+					logger.Error(err, "Failed to update status")
+				}
 				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 			}
 		}
@@ -251,9 +281,11 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	if err != nil {
 		logger.Error(err, "Failed to check cluster health")
 		// Don't fail completely - set conditions to Unknown and retry
-		r.updateStatus(ctx, garageCluster, "Deploying", fmt.Sprintf("Waiting for cluster health: %v", err))
+		r.updateStatus(ctx, garageCluster, "Deploying")
 		r.updateConditions(ctx, garageCluster, nil, nil, podsReady)
-		r.Status().Update(ctx, garageCluster)
+		if err := r.Status().Update(ctx, garageCluster); err != nil {
+			logger.Error(err, "Failed to update status")
+		}
 		return ctrl.Result{RequeueAfter: 10 * time.Second}, nil
 	}
 
@@ -267,15 +299,17 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	// Set phase based on overall cluster health
 	// healthy or degraded = Ready (operational)
 	// unavailable = Deploying (not yet operational)
-	if (health.Status == "healthy" || health.Status == "degraded") && podsReady {
-		r.updateStatus(ctx, garageCluster, "Ready", fmt.Sprintf("Cluster is operational (%s)", health.Status))
+	if (health.Status == healthStatusHealthy || health.Status == healthStatusDegraded) && podsReady {
+		r.updateStatus(ctx, garageCluster, phaseReady)
 	} else if health.Status == "unavailable" {
-		r.updateStatus(ctx, garageCluster, "Deploying", "Cluster is unavailable, waiting for quorum")
+		r.updateStatus(ctx, garageCluster, "Deploying")
 	} else {
-		r.updateStatus(ctx, garageCluster, "Deploying", fmt.Sprintf("Cluster status: %s", health.Status))
+		r.updateStatus(ctx, garageCluster, "Deploying")
 	}
 
-	r.Status().Update(ctx, garageCluster)
+	if err := r.Status().Update(ctx, garageCluster); err != nil {
+		logger.Error(err, "Failed to update status")
+	}
 
 	// Requeue to continuously check health
 	return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
