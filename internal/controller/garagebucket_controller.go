@@ -328,19 +328,36 @@ func (r *GarageBucketReconciler) reconcileKey(ctx context.Context, bucket *garag
 	// Only create/update secret if we have the secret key
 	// (secretKey is empty if key already existed and wasn't recreated)
 	if secretKey != "" {
+		// Determine public endpoint if ingress is configured
+		publicEndpoint := ""
+		if cluster.Spec.Ingress != nil && cluster.Spec.Ingress.Enabled && cluster.Spec.Ingress.Host != "" {
+			scheme := "http"
+			if cluster.Spec.Ingress.TLS != nil && cluster.Spec.Ingress.TLS.Enabled {
+				scheme = "https"
+			}
+			publicEndpoint = fmt.Sprintf("%s://%s", scheme, cluster.Spec.Ingress.Host)
+		}
+
 		// Create or update secret
+		secretData := map[string]string{
+			"accessKeyId":     keyID,
+			"secretAccessKey": secretKey,
+			"bucket":          bucket.Status.ActualBucketName,
+			"serviceEndpoint": cluster.Status.S3Endpoint,
+		}
+
+		// Add publicEndpoint if available
+		if publicEndpoint != "" {
+			secretData["publicEndpoint"] = publicEndpoint
+		}
+
 		secret := &corev1.Secret{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      secretName,
 				Namespace: secretNamespace,
 			},
-			Type: corev1.SecretTypeOpaque,
-			StringData: map[string]string{
-				"accessKeyId":     keyID,
-				"secretAccessKey": secretKey,
-				"bucket":          bucket.Status.ActualBucketName,
-				"endpoint":        cluster.Status.S3Endpoint,
-			},
+			Type:       corev1.SecretTypeOpaque,
+			StringData: secretData,
 		}
 
 		// Only set owner reference if secret is in same namespace
@@ -363,7 +380,8 @@ func (r *GarageBucketReconciler) reconcileKey(ctx context.Context, bucket *garag
 			if string(foundSecret.Data["accessKeyId"]) != keyID ||
 				string(foundSecret.Data["secretAccessKey"]) != secretKey ||
 				string(foundSecret.Data["bucket"]) != bucket.Status.ActualBucketName ||
-				string(foundSecret.Data["endpoint"]) != cluster.Status.S3Endpoint {
+				string(foundSecret.Data["serviceEndpoint"]) != cluster.Status.S3Endpoint ||
+				string(foundSecret.Data["publicEndpoint"]) != publicEndpoint {
 				needsUpdate = true
 			}
 

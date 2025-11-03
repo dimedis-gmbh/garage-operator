@@ -362,17 +362,19 @@ data:
   accessKeyId: R0s... # Base64 encoded Garage access key ID
   secretAccessKey: Y2F... # Base64 encoded Garage secret access key
   bucket: bXktYXBwLXN0b3JhZ2U= # Base64 encoded bucket name
-  endpoint: aHR0cDovL215LWdhcmFnZTo5MDAw # Base64 encoded S3 endpoint URL
+  serviceEndpoint: aHR0cDovL215LWdhcmFnZTo5MDAw # Base64 encoded S3 service endpoint (cluster-internal)
+  publicEndpoint: aHR0cHM6Ly9nYXJhZ2UuZXhhbXBsZS5jb20= # Base64 encoded public S3 endpoint (optional, if ingress configured)
 ```
 
 **Secret fields:**
 
-| Field             | Description                          | Example Value                         |
-| ----------------- | ------------------------------------ | ------------------------------------- |
-| `accessKeyId`     | Garage S3 access key ID              | `GK5a8f9b2c1d3e4f5a6b7c8d9e0f1a2b`    |
-| `secretAccessKey` | Garage S3 secret access key          | `7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f...` |
-| `bucket`          | Name of the bucket                   | `my-app-storage`                      |
-| `endpoint`        | S3 endpoint URL of the GarageCluster | `http://my-garage:9000`               |
+| Field             | Description                                                        | Example Value                         | Always Present          |
+| ----------------- | ------------------------------------------------------------------ | ------------------------------------- | ----------------------- |
+| `accessKeyId`     | Garage S3 access key ID                                            | `GK5a8f9b2c1d3e4f5a6b7c8d9e0f1a2b`    | Yes                     |
+| `secretAccessKey` | Garage S3 secret access key                                        | `7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f...` | Yes                     |
+| `bucket`          | Name of the bucket                                                 | `my-app-storage`                      | Yes                     |
+| `serviceEndpoint` | S3 endpoint URL for cluster-internal access                        | `http://my-garage.default.svc:3900`   | Yes                     |
+| `publicEndpoint`  | Public S3 endpoint URL (via ingress, with http/https based on TLS) | `https://garage.example.com`          | Only if ingress enabled |
 
 #### Using the Secret in applications
 
@@ -403,11 +405,18 @@ spec:
             secretKeyRef:
               name: my-app-storage-app-key
               key: bucket
-        - name: S3_ENDPOINT
+        - name: S3_SERVICE_ENDPOINT
           valueFrom:
             secretKeyRef:
               name: my-app-storage-app-key
-              key: endpoint
+              key: serviceEndpoint
+        # Optional: Use publicEndpoint for external access
+        - name: S3_PUBLIC_ENDPOINT
+          valueFrom:
+            secretKeyRef:
+              name: my-app-storage-app-key
+              key: publicEndpoint
+              optional: true
 ```
 
 Or mount as files:
