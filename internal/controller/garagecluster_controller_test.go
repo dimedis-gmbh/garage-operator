@@ -55,6 +55,9 @@ var _ = Describe("GarageCluster Controller", func() {
 						ReplicaCount:      3,
 						ReplicationFactor: 3,
 						ConsistencyMode:   "consistent",
+						Image: &garagev1alpha1.ImageConfig{
+							Tag: "v1.0.1",
+						},
 					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
