@@ -26,5 +26,8 @@ go.work
 *.swo
 *~
 
+# release files
+dist/
+
 # local env configuration
 env.sh
