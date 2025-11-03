@@ -781,12 +781,37 @@ make undeploy
 ## Documentation
 
 - [Layout Configuration Guide](docs/LAYOUT_CONFIGURATION.md) - Detailed guide on zone assignment strategies and scaling
+- [Release Process](docs/RELEASE_PROCESS.md) - How to create and publish releases
 
 ## Project Distribution
 
+The operator is distributed through GitHub Releases with multiple installation methods.
+
+### Quick Install
+
+**Using Kustomize (latest version):**
+
+```sh
+kubectl apply -f https://github.com/dimedis-gmbh/garage-operator/releases/latest/download/install.yaml
+```
+
+**Using Helm (latest version):**
+
+```sh
+# Direct installation with chart URL
+helm install garage-operator \
+  https://github.com/dimedis-gmbh/garage-operator/releases/latest/download/garage-operator-<version>.tgz \
+  --namespace garage-operator-system \
+  --create-namespace
+```
+
+See [Release Process](docs/RELEASE_PROCESS.md) for detailed installation options and version-specific URLs.
+
+### Installation Methods
+
 Following the options to release and provide this solution to the users.
 
-### By providing a bundle with all YAML files
+#### By providing a bundle with all YAML files
 
 1. Build the installer for the image built and published in the registry:
 
@@ -805,26 +830,74 @@ Users can just run 'kubectl apply -f <URL for YAML BUNDLE>' to install
 the project, i.e.:
 
 ```sh
-kubectl apply -f https://raw.githubusercontent.com/<org>/garage-operator/<tag or branch>/dist/install.yaml
+kubectl apply -f https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/install.yaml
 ```
 
-### By providing a Helm Chart
+#### By providing a Helm Chart
 
-1. Build the chart using the optional helm plugin
+The Helm chart is automatically generated and packaged with each release.
+
+**Install from release:**
 
 ```sh
-kubebuilder edit --plugins=helm/v1-alpha
+helm install garage-operator \
+  https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz
 ```
 
-2. See that a chart was generated under 'dist/chart', and users
-   can obtain this solution from there.
+**Or use as Helm repository:**
 
-**NOTE:** If you change the project, you need to update the Helm Chart
-using the same command above to sync the latest changes. Furthermore,
-if you create webhooks, you need to use the above command with
-the '--force' flag and manually ensure that any custom configuration
-previously added to 'dist/chart/values.yaml' or 'dist/chart/manager/manager.yaml'
-is manually re-applied afterwards.
+```sh
+helm repo add garage-operator https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0
+helm repo update
+helm install garage-operator garage-operator/garage-operator --version 1.0.0
+```
+
+**With custom configuration:**
+
+```sh
+# Create custom values
+cat > my-values.yaml <<EOF
+controllerManager:
+  replicas: 2
+  container:
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+EOF
+
+# Install with custom values
+helm install garage-operator \
+  https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz \
+  --values my-values.yaml \
+  --namespace garage-operator-system \
+  --create-namespace
+```
+
+**NOTE:** The chart is automatically updated with each release. Check the
+`dist/chart/values.yaml` file for all available configuration options.
+
+### Building Charts Locally
+
+1. Update chart version and dependencies:
+
+```sh
+# Update Chart.yaml with new version
+vim dist/chart/Chart.yaml
+
+# Package the chart
+make build-chart
+```
+
+2. Test the chart before releasing:
+
+```sh
+# Dry-run installation
+helm install garage-operator dist/chart --dry-run --debug
+
+# Lint the chart
+helm lint dist/chart
+```
 
 ## Contributing
 

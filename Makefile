@@ -152,6 +152,32 @@ build-installer: manifests generate kustomize ## Generate a consolidated YAML wi
 	cd config/manager && $(KUSTOMIZE) edit set image controller=${IMG}
 	$(KUSTOMIZE) build config/default > dist/install.yaml
 
+.PHONY: build-chart
+build-chart: ## Package Helm chart
+	@command -v helm >/dev/null 2>&1 || { echo "Helm is not installed. Please install Helm."; exit 1; }
+	helm package dist/chart -d dist/
+
+.PHONY: release-prepare
+release-prepare: ## Prepare release artifacts locally (for testing)
+	@echo "==> Preparing release artifacts..."
+	@if [ -z "$(VERSION)" ]; then echo "VERSION is not set. Use: make release-prepare VERSION=v1.0.0"; exit 1; fi
+	@echo "==> Building installer for $(VERSION)..."
+	IMG=$(REGISTRY)/$(IMAGE_NAME):$(VERSION) $(MAKE) build-installer
+	@echo "==> Updating Helm chart version..."
+	@VERSION_NO_V=$$(echo $(VERSION) | sed 's/^v//'); \
+	sed -i "s/^version: .*/version: $${VERSION_NO_V}/" dist/chart/Chart.yaml; \
+	sed -i "s/^appVersion: .*/appVersion: \"$${VERSION_NO_V}\"/" dist/chart/Chart.yaml; \
+	sed -i "s|repository: .*|repository: $(REGISTRY)/$(IMAGE_NAME)|" dist/chart/values.yaml; \
+	sed -i "s|tag: .*|tag: $(VERSION)|" dist/chart/values.yaml
+	@echo "==> Packaging Helm chart..."
+	@$(MAKE) build-chart
+	@echo "==> Release artifacts prepared in dist/"
+	@ls -lh dist/
+
+# Variables for release preparation
+REGISTRY ?= ghcr.io
+IMAGE_NAME ?= $(shell echo $(shell git config --get remote.origin.url) | sed 's|https://github.com/||' | sed 's|git@github.com:||' | sed 's|.git$$||')
+
 ##@ Deployment
 
 ifndef ignore-not-found

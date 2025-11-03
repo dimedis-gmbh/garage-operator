@@ -1,0 +1,178 @@
+# Example Helm Values for Garage Operator
+#
+# This file shows common customization options for deploying the
+# Garage Operator using Helm.
+
+# [MANAGER]: Controller Manager Configuration
+controllerManager:
+  # Number of operator replicas (set to 1 for leader election)
+  replicas: 1
+
+  container:
+    image:
+      # Image repository (automatically set in releases)
+      repository: ghcr.io/dimedis-gmbh/garage-operator
+      # Image tag (automatically set in releases)
+      tag: v1.0.0
+    # Image pull policy
+    imagePullPolicy: IfNotPresent
+
+    # Controller arguments
+    args:
+      - "--leader-elect"
+      - "--metrics-bind-address=:8443"
+      - "--health-probe-bind-address=:8081"
+      # Add custom args here, e.g.:
+      # - "--zap-log-level=debug"
+
+    # Resource limits and requests
+    resources:
+      limits:
+        cpu: 1000m
+        memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 128Mi
+
+    # Liveness probe configuration
+    livenessProbe:
+      initialDelaySeconds: 15
+      periodSeconds: 20
+      timeoutSeconds: 5
+      failureThreshold: 3
+      httpGet:
+        path: /healthz
+        port: 8081
+
+    # Readiness probe configuration
+    readinessProbe:
+      initialDelaySeconds: 5
+      periodSeconds: 10
+      timeoutSeconds: 5
+      failureThreshold: 3
+      httpGet:
+        path: /readyz
+        port: 8081
+
+    # Container security context
+    securityContext:
+      allowPrivilegeEscalation: false
+      capabilities:
+        drop:
+          - "ALL"
+      readOnlyRootFilesystem: true
+      runAsNonRoot: true
+      runAsUser: 65532
+
+  # Pod security context
+  securityContext:
+    runAsNonRoot: true
+    seccompProfile:
+      type: RuntimeDefault
+    fsGroup: 65532
+
+  # Termination grace period
+  terminationGracePeriodSeconds: 10
+
+  # Service account name
+  serviceAccountName: garage-operator-controller-manager
+
+  # Node selector
+  nodeSelector: {}
+  # Example:
+  # kubernetes.io/os: linux
+  # node-role.kubernetes.io/control-plane: ""
+
+  # Tolerations
+  tolerations: []
+  # Example:
+  # - key: node-role.kubernetes.io/control-plane
+  #   operator: Exists
+  #   effect: NoSchedule
+
+  # Affinity rules
+  affinity: {}
+  # Example:
+  # podAntiAffinity:
+  #   preferredDuringSchedulingIgnoredDuringExecution:
+  #   - weight: 100
+  #     podAffinityTerm:
+  #       labelSelector:
+  #         matchExpressions:
+  #         - key: control-plane
+  #           operator: In
+  #           values:
+  #           - controller-manager
+  #       topologyKey: kubernetes.io/hostname
+
+# [RBAC]: Role-Based Access Control
+rbac:
+  # Enable RBAC resources (ClusterRole, ClusterRoleBinding, etc.)
+  enable: true
+
+# [CRDs]: Custom Resource Definitions
+crd:
+  # Install CRDs as part of the Helm release
+  enable: true
+
+  # Keep CRDs when uninstalling the chart
+  # (prevents accidental deletion of GarageCluster/GarageBucket resources)
+  keep: true
+
+# [METRICS]: Metrics Configuration
+metrics:
+  # Enable metrics export
+  enable: true
+
+  # Service configuration for metrics
+  service:
+    type: ClusterIP
+    port: 8443
+
+# [PROMETHEUS]: Prometheus Integration
+prometheus:
+  # Enable ServiceMonitor for Prometheus Operator
+  enable: false
+
+  # ServiceMonitor configuration
+  serviceMonitor:
+    # Scrape interval
+    interval: 30s
+    # Scrape timeout
+    scrapeTimeout: 10s
+    # Additional labels for ServiceMonitor
+    labels: {}
+    # Metric relabelings
+    relabelings: []
+    # Target relabelings
+    targetLabels: []
+
+# [CERT-MANAGER]: Cert-Manager Integration
+certmanager:
+  # Enable cert-manager for webhook certificates
+  # (required if webhooks are enabled)
+  enable: false
+
+# [NETWORK POLICIES]: Network Policy Configuration
+networkPolicy:
+  # Enable NetworkPolicy resources
+  enable: false
+
+  # Ingress rules for the controller
+  ingress:
+    # Allow metrics scraping from Prometheus
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              name: monitoring
+      ports:
+        - protocol: TCP
+          port: 8443
+
+# [IMAGE PULL SECRETS]: Docker registry credentials
+imagePullSecrets: []
+# Example for private registries:
+# - name: ghcr-credentials
+
+# [NAMESPACE]: Target namespace (set via --namespace in helm install)
+# namespaceOverride: garage-operator-system

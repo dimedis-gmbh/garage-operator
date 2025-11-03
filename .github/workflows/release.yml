@@ -1,0 +1,165 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+permissions:
+  contents: write
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: "go.mod"
+
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/}
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_no_v=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install dependencies
+        run: |
+          make kustomize
+          make controller-gen
+
+      - name: Generate manifests
+        run: make manifests
+
+      - name: Build Kustomize installer
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+        run: |
+          make build-installer
+          mv dist/install.yaml dist/install-${{ steps.version.outputs.version }}.yaml
+          cp dist/install-${{ steps.version.outputs.version }}.yaml dist/install.yaml
+
+      - name: Update Helm Chart version
+        run: |
+          VERSION=${{ steps.version.outputs.version_no_v }}
+          sed -i "s/^version: .*/version: ${VERSION}/" dist/chart/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"${VERSION}\"/" dist/chart/Chart.yaml
+
+      - name: Update Helm Chart image
+        run: |
+          VERSION=${{ steps.version.outputs.version }}
+          REPO=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          yq eval -i ".controllerManager.container.image.repository = \"${REPO}\"" dist/chart/values.yaml
+          yq eval -i ".controllerManager.container.image.tag = \"${VERSION}\"" dist/chart/values.yaml
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm Chart
+        run: |
+          helm package dist/chart -d dist/
+          helm repo index dist/ --url https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          cat > release-notes.md << 'EOF'
+          ## Installation
+
+          ### Using Kustomize
+
+          Install the operator with a single command:
+
+          \`\`\`bash
+          kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/install.yaml
+          \`\`\`
+
+          Or use the versioned file:
+
+          \`\`\`bash
+          kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/install-${{ steps.version.outputs.version }}.yaml
+          \`\`\`
+
+          ### Using Helm
+
+          \`\`\`bash
+          helm install garage-operator \
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/garage-operator-${{ steps.version.outputs.version_no_v }}.tgz
+          \`\`\`
+
+          Or add the repository:
+
+          \`\`\`bash
+          helm repo add garage-operator https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}
+          helm repo update
+          helm install garage-operator garage-operator/garage-operator --version ${{ steps.version.outputs.version_no_v }}
+          \`\`\`
+
+          ### Docker Image
+
+          \`\`\`
+          ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
+          \`\`\`
+
+          Available platforms: `linux/amd64`, `linux/arm64`
+
+          ## What's Changed
+
+          <!-- Add your release notes here -->
+          EOF
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/install.yaml
+            dist/install-${{ steps.version.outputs.version }}.yaml
+            dist/garage-operator-${{ steps.version.outputs.version_no_v }}.tgz
+            dist/index.yaml
+          body_path: release-notes.md
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.version, '-') }}
+          generate_release_notes: true
