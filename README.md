@@ -139,6 +139,44 @@ spec:
     rootDomain: ".s3.garage.example.com"
 ```
 
+### Multi-Zone with Node Labels
+
+Use Kubernetes node topology labels for zone assignment:
+
+```yaml
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageCluster
+metadata:
+  name: multi-zone-garage
+spec:
+  replicaCount: 6
+  replicationFactor: 3
+  consistencyMode: "consistent"
+
+  # Use actual datacenter zones from node labels
+  layout:
+    mode: zoneFromNodeLabel
+    zoneNodeLabel: "topology.kubernetes.io/zone"
+
+  persistence:
+    data:
+      size: "1000Gi"
+      storageClass: "fast-ssd"
+    meta:
+      size: "50Gi"
+      storageClass: "fast-ssd"
+
+  resources:
+    requests:
+      cpu: "1000m"
+      memory: "2Gi"
+    limits:
+      cpu: "4000m"
+      memory: "8Gi"
+```
+
+This configuration will read the zone from each node's `topology.kubernetes.io/zone` label (e.g., `us-east-1a`, `us-east-1b`, `us-east-1c`) and assign Garage nodes accordingly.
+
 ## Configuration Options
 
 ### GarageCluster Configuration
@@ -153,6 +191,21 @@ spec:
 | `s3Api`             | S3ApiConfig          | No       | -            | S3 API configuration                                       |
 | `ingress`           | IngressConfig        | No       | -            | Ingress configuration                                      |
 | `resources`         | ResourceRequirements | No       | -            | Resource requests and limits                               |
+| `layout`            | LayoutConfig         | No       | -            | Zone assignment strategy for cluster layout                |
+
+#### LayoutConfig
+
+| Field           | Type   | Required | Default                       | Description                                                                |
+| --------------- | ------ | -------- | ----------------------------- | -------------------------------------------------------------------------- |
+| `mode`          | string | No       | "zonePerNode"                 | Zone assignment mode: "zonePerNode" or "zoneFromNodeLabel"                 |
+| `zoneNodeLabel` | string | No       | "topology.kubernetes.io/zone" | Node label to use for zone assignment (only used with zoneFromNodeLabel)   |
+
+**Layout Modes:**
+
+- **zonePerNode** (default): Each replica gets its own sequential zone (z1, z2, z3, ...). Simple and predictable.
+- **zoneFromNodeLabel**: Zones are derived from Kubernetes node labels. Allows alignment with infrastructure topology (e.g., datacenter zones).
+
+**Important:** The layout mode cannot be changed after initial cluster creation to prevent data inconsistency.
 
 #### PersistenceConfig
 
@@ -426,6 +479,74 @@ kubectl exec my-garage-0 -- ./garage key create my-key
 kubectl exec my-garage-0 -- ./garage bucket allow --read --write my-bucket --key my-key
 ```
 
+## Cluster Operations
+
+### Scaling a GarageCluster
+
+#### Scaling Up
+
+The operator automatically handles scaling up. Simply increase the `replicaCount`:
+
+```bash
+kubectl patch garagecluster my-garage -p '{"spec":{"replicaCount":6}}' --type=merge
+```
+
+The operator will:
+
+1. Wait for new pods to become ready
+2. Detect new nodes not yet in the cluster layout
+3. Connect new nodes to the existing cluster
+4. Assign zones based on the configured layout mode
+5. Apply the updated layout with an incremented version
+
+**Monitor the scaling process:**
+
+```bash
+# Watch cluster status
+kubectl get garagecluster my-garage -w
+
+# Check layout version (increases after scaling)
+kubectl get garagecluster my-garage -o jsonpath='{.status.layoutVersion}'
+
+# View operator logs
+kubectl logs -n garage-operator-system -l control-plane=controller-manager -f
+```
+
+#### Scaling Down
+
+**Important:** Scaling down is not automated to prevent accidental data loss.
+
+To scale down safely:
+
+1. Access a Garage pod:
+   ```bash
+   kubectl exec -it my-garage-0 -- /bin/sh
+   ```
+
+2. Remove nodes from the layout:
+   ```bash
+   # View current layout
+   ./garage layout show
+   
+   # Remove a node (replace with actual node ID)
+   ./garage layout remove <node-id>
+   
+   # Apply the layout
+   ./garage layout apply --version <new-version>
+   ```
+
+3. Wait for data rebalancing to complete:
+   ```bash
+   ./garage status
+   ```
+
+4. Then reduce the `replicaCount`:
+   ```bash
+   kubectl patch garagecluster my-garage -p '{"spec":{"replicaCount":4}}' --type=merge
+   ```
+
+**Note:** The layout mode (zonePerNode vs zoneFromNodeLabel) is set during initial cluster creation and cannot be changed later.
+
 ## GarageBucket Examples
 
 ### Simple Application Bucket
@@ -625,6 +746,10 @@ make uninstall
 ```sh
 make undeploy
 ```
+
+## Documentation
+
+- [Layout Configuration Guide](docs/LAYOUT_CONFIGURATION.md) - Detailed guide on zone assignment strategies and scaling
 
 ## Project Distribution
 
