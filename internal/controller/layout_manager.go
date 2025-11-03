@@ -160,6 +160,167 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	return nil
 }
 
+// UpdateLayout updates the Garage cluster layout when scaling up
+func (lm *LayoutManager) UpdateLayout(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
+	// Create GarageClient for this cluster
+	client, err := NewGarageClient(lm.config, gc)
+	if err != nil {
+		return fmt.Errorf("failed to create garage client: %w", err)
+	}
+
+	// Wait for all pods to be ready
+	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+		podName := fmt.Sprintf("%s-%d", gc.Name, i)
+		if err := lm.waitForPod(ctx, gc.Namespace, podName, 5*time.Minute); err != nil {
+			return fmt.Errorf("pod %s not ready: %w", podName, err)
+		}
+	}
+
+	// Give Garage a moment to start up completely
+	time.Sleep(5 * time.Second)
+
+	// Get current layout version by querying garage
+	output, err := client.ExecCommand(ctx, "layout", "show")
+	if err != nil {
+		return fmt.Errorf("failed to get current layout: %w, output: %s", err, output)
+	}
+
+	// Parse layout version from output (format: "Current cluster layout version: X")
+	var currentLayoutVersion int64 = 1
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		if strings.Contains(line, "Current cluster layout version:") {
+			fmt.Sscanf(line, "Current cluster layout version: %d", &currentLayoutVersion)
+			break
+		}
+	}
+
+	// Get all node IDs that are already in the layout
+	existingNodes := make(map[string]bool)
+	for _, line := range lines {
+		// Parse node IDs from layout output
+		// Format varies, but node IDs are typically 32 character hex strings
+		fields := strings.Fields(line)
+		for _, field := range fields {
+			if len(field) == 32 && isHexString(field) {
+				existingNodes[field] = true
+			}
+		}
+	}
+
+	// Get node IDs and addresses from each pod
+	type nodeInfo struct {
+		id      string
+		address string
+		index   int32
+	}
+	allNodes := make([]nodeInfo, 0, gc.Spec.ReplicaCount)
+	newNodes := make([]nodeInfo, 0)
+
+	for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+		podName := fmt.Sprintf("%s-%d", gc.Name, i)
+		nodeID, err := lm.getNodeID(ctx, gc.Namespace, podName)
+		if err != nil {
+			return fmt.Errorf("failed to get node ID from pod %s: %w", podName, err)
+		}
+
+		// Build the full node address with DNS name
+		nodeAddress := fmt.Sprintf("%s@%s.%s.%s.svc.cluster.local:3901",
+			nodeID, podName, gc.Name, gc.Namespace)
+
+		info := nodeInfo{
+			id:      nodeID,
+			address: nodeAddress,
+			index:   i,
+		}
+		allNodes = append(allNodes, info)
+
+		// Check if this is a new node
+		if !existingNodes[nodeID] {
+			newNodes = append(newNodes, info)
+		}
+	}
+
+	// If no new nodes, nothing to do
+	if len(newNodes) == 0 {
+		return nil
+	}
+
+	// Connect new nodes to the cluster
+	for _, node := range newNodes {
+		output, err := client.ExecCommand(ctx, "node", "connect", node.address)
+		if err != nil {
+			return fmt.Errorf("failed to connect to node %s: %w, output: %s", node.address, err, output)
+		}
+	}
+
+	// Give nodes time to establish connections
+	time.Sleep(2 * time.Second)
+
+	// Determine capacity - use data volume size
+	capacity := "20Gi" // default
+	if gc.Spec.Persistence != nil && gc.Spec.Persistence.Data != nil && gc.Spec.Persistence.Data.Size != "" {
+		capacity = gc.Spec.Persistence.Data.Size
+	}
+
+	// Determine layout mode
+	layoutMode := "zonePerNode"                    // default
+	zoneNodeLabel := "topology.kubernetes.io/zone" // default
+	if gc.Spec.Layout != nil {
+		if gc.Spec.Layout.Mode != "" {
+			layoutMode = gc.Spec.Layout.Mode
+		}
+		if gc.Spec.Layout.ZoneNodeLabel != "" {
+			zoneNodeLabel = gc.Spec.Layout.ZoneNodeLabel
+		}
+	}
+
+	// Get zone assignments based on mode for ALL nodes (to ensure correct indexing)
+	zones, err := lm.getZoneAssignments(ctx, gc, layoutMode, zoneNodeLabel)
+	if err != nil {
+		return fmt.Errorf("failed to get zone assignments: %w", err)
+	}
+
+	// Assign layout for new nodes only
+	for _, node := range newNodes {
+		zone := zones[node.index]
+
+		output, err := client.ExecCommand(ctx,
+			"layout",
+			"assign",
+			"-z", zone,
+			"-c", capacity,
+			node.id,
+		)
+		if err != nil {
+			return fmt.Errorf("failed to assign layout for node %s: %w, output: %s", node.id, err, output)
+		}
+	}
+
+	// Apply layout with incremented version
+	newLayoutVersion := currentLayoutVersion + 1
+	output, err = client.ExecCommand(ctx,
+		"layout",
+		"apply",
+		"--version", fmt.Sprintf("%d", newLayoutVersion),
+	)
+	if err != nil {
+		return fmt.Errorf("failed to apply layout: %w, output: %s", err, output)
+	}
+
+	return nil
+}
+
+// isHexString checks if a string contains only hexadecimal characters
+func isHexString(s string) bool {
+	for _, c := range s {
+		if !((c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
 // getZoneAssignments determines zone assignments based on the configured mode
 func (lm *LayoutManager) getZoneAssignments(ctx context.Context, gc *garagev1alpha1.GarageCluster, mode, nodeLabel string) ([]string, error) {
 	zones := make([]string, gc.Spec.ReplicaCount)

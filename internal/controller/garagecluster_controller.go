@@ -225,6 +225,24 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			r.Status().Update(ctx, garageCluster)
 			return ctrl.Result{}, fmt.Errorf("layout mode cannot be changed: applied=%s, requested=%s", appliedMode, currentMode)
 		}
+
+		// Check if cluster has been scaled up and needs layout update
+		if podsReady {
+			// Create LayoutManager
+			layoutMgr, err := NewLayoutManager(config)
+			if err != nil {
+				logger.Error(err, "Failed to create LayoutManager for update")
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+
+			// Try to update layout for new nodes (if any)
+			if err := layoutMgr.UpdateLayout(ctx, garageCluster); err != nil {
+				logger.Error(err, "Failed to update layout for scaled cluster")
+				r.updateStatus(ctx, garageCluster, "Failed", "Layout update failed: "+err.Error())
+				r.Status().Update(ctx, garageCluster)
+				return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
+			}
+		}
 	}
 
 	// Pods are ready and layout is configured, now check cluster health
