@@ -1,0 +1,50 @@
+apiVersion: garage.dimedis.io/v1alpha1
+kind: GarageCluster
+metadata:
+  labels:
+    app.kubernetes.io/name: garagecluster
+    app.kubernetes.io/instance: garagecluster-zone-label
+    app.kubernetes.io/part-of: garage-operator
+    app.kubernetes.io/managed-by: kustomize
+    app.kubernetes.io/created-by: garage-operator
+  name: garagecluster-zone-label
+spec:
+  # Number of Garage pod replicas in the StatefulSet
+  replicaCount: 4
+
+  # Replication factor: number of copies of data stored in the cluster
+  replicationFactor: 2
+
+  # Consistency mode for read/write operations
+  consistencyMode: "consistent"
+
+  # Block size for Garage data blocks
+  blockSize: "1Mi"
+
+  # Persistence configuration
+  persistence:
+    data:
+      size: "20Gi"
+    meta:
+      size: "1Gi"
+
+  # Layout configuration - using zone labels from nodes
+  # This example uses node labels to determine zones instead of sequential zones (z1, z2, ...)
+  layout:
+    mode: zoneFromNodeLabel
+    zoneNodeLabel: "topology.kubernetes.io/zone"
+
+  # Optional: S3 API configuration
+  s3Api:
+    enabled: true
+    region: "garage"
+    rootDomain: ".s3.garage.localhost"
+
+  # Optional: Resource limits
+  resources:
+    requests:
+      cpu: "100m"
+      memory: "256Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1Gi"

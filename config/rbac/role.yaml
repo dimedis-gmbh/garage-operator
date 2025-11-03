@@ -23,6 +23,7 @@ rules:
   - ""
   resources:
   - endpoints
+  - nodes
   - pods
   verbs:
   - get

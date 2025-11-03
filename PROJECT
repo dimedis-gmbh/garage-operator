@@ -6,6 +6,8 @@ cliVersion: 4.9.0
 domain: dimedis.io
 layout:
 - go.kubebuilder.io/v4
+plugins:
+  helm.kubebuilder.io/v1-alpha: {}
 projectName: garage-operator
 repo: github.com/dimedis-gmbh/garage-operator
 resources:

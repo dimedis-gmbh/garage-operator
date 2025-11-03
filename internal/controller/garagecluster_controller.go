@@ -54,6 +54,7 @@ type GarageClusterReconciler struct {
 // +kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=core,resources=endpoints,verbs=get;list;watch
+// +kubebuilder:rbac:groups=core,resources=nodes,verbs=get;list;watch
 // +kubebuilder:rbac:groups=networking.k8s.io,resources=ingresses,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
 // +kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
@@ -169,6 +170,12 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 
 	// Configure layout if not done yet
 	if garageCluster.Status.LayoutVersion == 0 {
+		// Determine the layout mode to use
+		layoutMode := "zonePerNode" // default
+		if garageCluster.Spec.Layout != nil && garageCluster.Spec.Layout.Mode != "" {
+			layoutMode = garageCluster.Spec.Layout.Mode
+		}
+
 		r.updateStatus(ctx, garageCluster, "LayoutConfiguring", "Configuring cluster layout")
 		r.Status().Update(ctx, garageCluster)
 
@@ -178,23 +185,46 @@ func (r *GarageClusterReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			logger.Error(err, "Failed to create LayoutManager")
 			r.updateStatus(ctx, garageCluster, "Failed", "LayoutManager creation failed: "+err.Error())
 			r.Status().Update(ctx, garageCluster)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
 		if err := layoutMgr.ConfigureLayout(ctx, garageCluster); err != nil {
 			logger.Error(err, "Failed to configure layout")
 			r.updateStatus(ctx, garageCluster, "Failed", "Layout configuration failed: "+err.Error())
 			r.Status().Update(ctx, garageCluster)
-			return ctrl.Result{RequeueAfter: 30 * time.Second}, err
+			return ctrl.Result{RequeueAfter: 30 * time.Second}, nil
 		}
 
-		// Mark layout as configured
+		// Mark layout as configured and save the applied mode
 		garageCluster.Status.LayoutVersion = 1
+		garageCluster.Status.AppliedLayoutMode = layoutMode
 		if err := r.Status().Update(ctx, garageCluster); err != nil {
 			return ctrl.Result{}, err
 		}
 
-		logger.Info("Layout configuration completed successfully")
+		logger.Info("Layout configuration completed successfully", "mode", layoutMode)
+	} else {
+		// Layout already configured - validate that mode hasn't changed
+		currentMode := "zonePerNode" // default
+		if garageCluster.Spec.Layout != nil && garageCluster.Spec.Layout.Mode != "" {
+			currentMode = garageCluster.Spec.Layout.Mode
+		}
+
+		appliedMode := garageCluster.Status.AppliedLayoutMode
+		if appliedMode == "" {
+			// For backwards compatibility with clusters created before this feature
+			appliedMode = "zonePerNode"
+			garageCluster.Status.AppliedLayoutMode = appliedMode
+			r.Status().Update(ctx, garageCluster)
+		}
+
+		if currentMode != appliedMode {
+			errorMsg := fmt.Sprintf("Layout mode cannot be changed after initial configuration. Applied mode: %s, requested mode: %s", appliedMode, currentMode)
+			logger.Error(nil, errorMsg)
+			r.updateStatus(ctx, garageCluster, "Failed", errorMsg)
+			r.Status().Update(ctx, garageCluster)
+			return ctrl.Result{}, fmt.Errorf("layout mode cannot be changed: applied=%s, requested=%s", appliedMode, currentMode)
+		}
 	}
 
 	// Pods are ready and layout is configured, now check cluster health

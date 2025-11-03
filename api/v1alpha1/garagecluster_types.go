@@ -66,6 +66,27 @@ type GarageClusterSpec struct {
 	// Resources for Garage pods
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
+
+	// Layout configuration for zone assignment
+	// +optional
+	Layout *LayoutConfig `json:"layout,omitempty"`
+}
+
+// LayoutConfig defines layout zone assignment strategy
+type LayoutConfig struct {
+	// Mode determines how zones are assigned to nodes
+	// - zonePerNode: Each replica gets its own zone (z1, z2, z3, ...)
+	// - zoneFromNodeLabel: Zones are determined from node labels
+	// +kubebuilder:validation:Enum=zonePerNode;zoneFromNodeLabel
+	// +kubebuilder:default=zonePerNode
+	// +optional
+	Mode string `json:"mode,omitempty"`
+
+	// ZoneNodeLabel specifies the node label to use for zone assignment
+	// Only used when mode is zoneFromNodeLabel
+	// +kubebuilder:default="topology.kubernetes.io/zone"
+	// +optional
+	ZoneNodeLabel string `json:"zoneNodeLabel,omitempty"`
 }
 
 // PersistenceConfig defines persistent volume configuration
@@ -169,6 +190,11 @@ type GarageClusterStatus struct {
 	// LayoutVersion is the current version of the cluster layout
 	// +optional
 	LayoutVersion int64 `json:"layoutVersion,omitempty"`
+
+	// AppliedLayoutMode is the layout mode that was applied during initial cluster setup
+	// This field is set once and cannot be changed to prevent inconsistent cluster states
+	// +optional
+	AppliedLayoutMode string `json:"appliedLayoutMode,omitempty"`
 }
 
 // +kubebuilder:object:root=true

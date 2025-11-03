@@ -113,9 +113,27 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 		capacity = gc.Spec.Persistence.Data.Size
 	}
 
+	// Determine layout mode
+	layoutMode := "zonePerNode"                    // default
+	zoneNodeLabel := "topology.kubernetes.io/zone" // default
+	if gc.Spec.Layout != nil {
+		if gc.Spec.Layout.Mode != "" {
+			layoutMode = gc.Spec.Layout.Mode
+		}
+		if gc.Spec.Layout.ZoneNodeLabel != "" {
+			zoneNodeLabel = gc.Spec.Layout.ZoneNodeLabel
+		}
+	}
+
+	// Get zone assignments based on mode
+	zones, err := lm.getZoneAssignments(ctx, gc, layoutMode, zoneNodeLabel)
+	if err != nil {
+		return fmt.Errorf("failed to get zone assignments: %w", err)
+	}
+
 	// Assign layout for each node
 	for i, node := range nodes {
-		zone := fmt.Sprintf("z%d", i+1)
+		zone := zones[i]
 
 		output, err := client.ExecCommand(ctx,
 			"layout",
@@ -140,6 +158,54 @@ func (lm *LayoutManager) ConfigureLayout(ctx context.Context, gc *garagev1alpha1
 	}
 
 	return nil
+}
+
+// getZoneAssignments determines zone assignments based on the configured mode
+func (lm *LayoutManager) getZoneAssignments(ctx context.Context, gc *garagev1alpha1.GarageCluster, mode, nodeLabel string) ([]string, error) {
+	zones := make([]string, gc.Spec.ReplicaCount)
+
+	switch mode {
+	case "zonePerNode":
+		// Each replica gets its own zone: z1, z2, z3, ...
+		for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+			zones[i] = fmt.Sprintf("z%d", i+1)
+		}
+
+	case "zoneFromNodeLabel":
+		// Get zone from node labels
+		for i := int32(0); i < gc.Spec.ReplicaCount; i++ {
+			podName := fmt.Sprintf("%s-%d", gc.Name, i)
+
+			// Get the pod to find out which node it's running on
+			pod, err := lm.clientset.CoreV1().Pods(gc.Namespace).Get(ctx, podName, metav1.GetOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to get pod %s: %w", podName, err)
+			}
+
+			if pod.Spec.NodeName == "" {
+				return nil, fmt.Errorf("pod %s is not yet assigned to a node", podName)
+			}
+
+			// Get the node to read the zone label
+			node, err := lm.clientset.CoreV1().Nodes().Get(ctx, pod.Spec.NodeName, metav1.GetOptions{})
+			if err != nil {
+				return nil, fmt.Errorf("failed to get node %s: %w", pod.Spec.NodeName, err)
+			}
+
+			// Get zone from node label
+			zone, ok := node.Labels[nodeLabel]
+			if !ok || zone == "" {
+				return nil, fmt.Errorf("node %s does not have label %s", pod.Spec.NodeName, nodeLabel)
+			}
+
+			zones[i] = zone
+		}
+
+	default:
+		return nil, fmt.Errorf("unknown layout mode: %s", mode)
+	}
+
+	return zones, nil
 }
 
 // getNodeID retrieves the node ID from a specific pod

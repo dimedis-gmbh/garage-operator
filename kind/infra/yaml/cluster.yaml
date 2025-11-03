@@ -29,21 +29,29 @@ nodes:
       - hostPath: .ssl/root-ca.pem
         containerPath: /opt/ca-certificates/root-ca.pem
         readOnly: true
+    labels:
+      topology.kubernetes.io/zone: dc1
   - role: worker
     image: kindest/node:v1.34.0
     extraMounts:
       - hostPath: .ssl/root-ca.pem
         containerPath: /opt/ca-certificates/root-ca.pem
         readOnly: true
+    labels:
+      topology.kubernetes.io/zone: dc2
   - role: worker
     image: kindest/node:v1.34.0
     extraMounts:
       - hostPath: .ssl/root-ca.pem
         containerPath: /opt/ca-certificates/root-ca.pem
         readOnly: true
+    labels:
+      topology.kubernetes.io/zone: dc1
   - role: worker
     image: kindest/node:v1.34.0
     extraMounts:
       - hostPath: .ssl/root-ca.pem
         containerPath: /opt/ca-certificates/root-ca.pem
         readOnly: true
+    labels:
+      topology.kubernetes.io/zone: dc2
