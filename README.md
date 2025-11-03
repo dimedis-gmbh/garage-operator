@@ -97,6 +97,8 @@ spec:
   replicaCount: 5
   replicationFactor: 2
   consistencyMode: "consistent"
+  image:
+    tag: "v2.1.0"
   persistence:
     data:
       size: "10Gi"
@@ -116,6 +118,11 @@ spec:
   replicationFactor: 3
   consistencyMode: "consistent"
   blockSize: 10Mi
+
+  image:
+    repository: "dxflrs/garage"
+    tag: "v2.1.0"
+    pullPolicy: IfNotPresent
 
   persistence:
     data:
@@ -153,6 +160,9 @@ spec:
   replicationFactor: 3
   consistencyMode: "consistent"
 
+  image:
+    tag: "v2.1.0"
+
   # Use actual datacenter zones from node labels
   layout:
     mode: zoneFromNodeLabel
@@ -187,18 +197,27 @@ This configuration will read the zone from each node's `topology.kubernetes.io/z
 | `replicationFactor` | int32                | No       | 3            | Number of data copies stored in cluster                    |
 | `consistencyMode`   | string               | No       | "consistent" | Consistency mode: "consistent", "degraded", or "dangerous" |
 | `blockSize`         | string               | No       | "1Mi"        | Size of Garage data blocks                                 |
+| `image`             | ImageConfig          | No       | -            | Container image configuration                              |
 | `persistence`       | PersistenceConfig    | No       | -            | Persistent volume configuration for data and meta          |
 | `s3Api`             | S3ApiConfig          | No       | -            | S3 API configuration                                       |
 | `ingress`           | IngressConfig        | No       | -            | Ingress configuration                                      |
 | `resources`         | ResourceRequirements | No       | -            | Resource requests and limits                               |
 | `layout`            | LayoutConfig         | No       | -            | Zone assignment strategy for cluster layout                |
 
+#### ImageConfig
+
+| Field        | Type       | Required | Default         | Description                                    |
+| ------------ | ---------- | -------- | --------------- | ---------------------------------------------- |
+| `repository` | string     | No       | "dxflrs/garage" | Container image repository                     |
+| `tag`        | string     | Yes      | -               | Container image tag (e.g., "v2.1.0")           |
+| `pullPolicy` | PullPolicy | No       | "IfNotPresent"  | Image pull policy: Always, Never, IfNotPresent |
+
 #### LayoutConfig
 
-| Field           | Type   | Required | Default                       | Description                                                                |
-| --------------- | ------ | -------- | ----------------------------- | -------------------------------------------------------------------------- |
-| `mode`          | string | No       | "zonePerNode"                 | Zone assignment mode: "zonePerNode" or "zoneFromNodeLabel"                 |
-| `zoneNodeLabel` | string | No       | "topology.kubernetes.io/zone" | Node label to use for zone assignment (only used with zoneFromNodeLabel)   |
+| Field           | Type   | Required | Default                       | Description                                                              |
+| --------------- | ------ | -------- | ----------------------------- | ------------------------------------------------------------------------ |
+| `mode`          | string | No       | "zonePerNode"                 | Zone assignment mode: "zonePerNode" or "zoneFromNodeLabel"               |
+| `zoneNodeLabel` | string | No       | "topology.kubernetes.io/zone" | Node label to use for zone assignment (only used with zoneFromNodeLabel) |
 
 **Layout Modes:**
 
@@ -519,23 +538,26 @@ kubectl logs -n garage-operator-system -l control-plane=controller-manager -f
 To scale down safely:
 
 1. Access a Garage pod:
+
    ```bash
    kubectl exec -it my-garage-0 -- /bin/sh
    ```
 
 2. Remove nodes from the layout:
+
    ```bash
    # View current layout
    ./garage layout show
-   
+
    # Remove a node (replace with actual node ID)
    ./garage layout remove <node-id>
-   
+
    # Apply the layout
    ./garage layout apply --version <new-version>
    ```
 
 3. Wait for data rebalancing to complete:
+
    ```bash
    ./garage status
    ```

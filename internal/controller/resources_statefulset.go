@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -31,11 +32,42 @@ import (
 	garagev1alpha1 "github.com/dimedis-gmbh/garage-operator/api/v1alpha1"
 )
 
-const (
-	garageImage = "dxflrs/garage:v2.1.0"
-)
-
 func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *garagev1alpha1.GarageCluster) error {
+	// Get ConfigMap to calculate hash
+	configMap := &corev1.ConfigMap{}
+	err := r.Get(ctx, types.NamespacedName{
+		Name:      gc.Name + "-config",
+		Namespace: gc.Namespace,
+	}, configMap)
+	if err != nil {
+		return fmt.Errorf("failed to get configmap for hash: %w", err)
+	}
+
+	// Calculate ConfigMap hash
+	configData := configMap.Data["garage.toml"]
+	configHash := fmt.Sprintf("%x", sha256.Sum256([]byte(configData)))
+
+	// Determine image configuration
+	imageRepository := "dxflrs/garage"
+	imageTag := ""
+	imagePullPolicy := corev1.PullIfNotPresent
+	if gc.Spec.Image != nil {
+		if gc.Spec.Image.Repository != "" {
+			imageRepository = gc.Spec.Image.Repository
+		}
+		imageTag = gc.Spec.Image.Tag
+		if gc.Spec.Image.PullPolicy != "" {
+			imagePullPolicy = gc.Spec.Image.PullPolicy
+		}
+	}
+
+	// Validate that image tag is set
+	if imageTag == "" {
+		return fmt.Errorf("image.tag is required")
+	}
+
+	garageImage := fmt.Sprintf("%s:%s", imageRepository, imageTag)
+
 	// Determine data volume configuration
 	dataSize := "20Gi"
 	dataStorageClass := ""
@@ -91,6 +123,9 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 			Template: corev1.PodTemplateSpec{
 				ObjectMeta: metav1.ObjectMeta{
 					Labels: map[string]string{"app": gc.Name},
+					Annotations: map[string]string{
+						"garage.dimedis.io/config-hash": configHash,
+					},
 				},
 				Spec: corev1.PodSpec{
 					ServiceAccountName: gc.Name,
@@ -108,10 +143,11 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 					},
 					Containers: []corev1.Container{
 						{
-							Name:    "garage",
-							Image:   garageImage,
-							Command: []string{"/garage"},
-							Args:    []string{"server"},
+							Name:            "garage",
+							Image:           garageImage,
+							ImagePullPolicy: imagePullPolicy,
+							Command:         []string{"/garage"},
+							Args:            []string{"server"},
 							Ports: []corev1.ContainerPort{
 								{Name: "s3-api", ContainerPort: 3900},
 								{Name: "rpc", ContainerPort: 3901},
@@ -206,9 +242,51 @@ func (r *GarageClusterReconciler) reconcileStatefulSet(ctx context.Context, gc *
 		return err
 	}
 
-	// Update only if there are changes (simplified check)
+	// Check if update is needed
+	needsUpdate := false
+
+	// Check replica count
 	if found.Spec.Replicas == nil || *found.Spec.Replicas != gc.Spec.ReplicaCount {
 		found.Spec.Replicas = &gc.Spec.ReplicaCount
+		needsUpdate = true
+	}
+
+	// Check container image
+	if len(found.Spec.Template.Spec.Containers) > 0 {
+		currentImage := found.Spec.Template.Spec.Containers[0].Image
+		if currentImage != garageImage {
+			found.Spec.Template.Spec.Containers[0].Image = garageImage
+			needsUpdate = true
+		}
+
+		// Check image pull policy
+		currentPullPolicy := found.Spec.Template.Spec.Containers[0].ImagePullPolicy
+		if currentPullPolicy != imagePullPolicy {
+			found.Spec.Template.Spec.Containers[0].ImagePullPolicy = imagePullPolicy
+			needsUpdate = true
+		}
+	}
+
+	// Check resources
+	if gc.Spec.Resources != nil {
+		currentResources := found.Spec.Template.Spec.Containers[0].Resources
+		if currentResources.String() != resources.String() {
+			found.Spec.Template.Spec.Containers[0].Resources = resources
+			needsUpdate = true
+		}
+	}
+
+	// Check config hash annotation (triggers pod restart when ConfigMap changes)
+	if found.Spec.Template.Annotations == nil {
+		found.Spec.Template.Annotations = make(map[string]string)
+	}
+	currentConfigHash := found.Spec.Template.Annotations["garage.dimedis.io/config-hash"]
+	if currentConfigHash != configHash {
+		found.Spec.Template.Annotations["garage.dimedis.io/config-hash"] = configHash
+		needsUpdate = true
+	}
+
+	if needsUpdate {
 		return r.Update(ctx, found)
 	}
 

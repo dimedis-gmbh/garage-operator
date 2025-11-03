@@ -27,6 +27,12 @@ spec:
   # See https://garagehq.deuxfleurs.fr/documentation/reference-manual/configuration/#block_size
   blockSize: "1Mi"
 
+  # Container image configuration
+  image:
+    repository: "dxflrs/garage"
+    tag: "v2.1.0"
+    pullPolicy: IfNotPresent
+
   # Persistence configuration
   persistence:
     data:

@@ -21,6 +21,12 @@ spec:
   # Block size for Garage data blocks
   blockSize: "1Mi"
 
+  # Container image configuration
+  image:
+    repository: "dxflrs/garage"
+    tag: "v2.1.0"
+    pullPolicy: IfNotPresent
+
   # Persistence configuration
   persistence:
     data:

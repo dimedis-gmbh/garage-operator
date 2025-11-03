@@ -77,6 +77,27 @@ spec:
                 - degraded
                 - dangerous
                 type: string
+              image:
+                description: Image configuration for Garage container
+                properties:
+                  pullPolicy:
+                    default: IfNotPresent
+                    description: PullPolicy is the image pull policy
+                    enum:
+                    - Always
+                    - Never
+                    - IfNotPresent
+                    type: string
+                  repository:
+                    default: dxflrs/garage
+                    description: Repository is the container image repository
+                    type: string
+                  tag:
+                    description: Tag is the container image tag
+                    type: string
+                required:
+                - tag
+                type: object
               ingress:
                 description: Ingress configuration
                 properties:

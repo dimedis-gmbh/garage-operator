@@ -67,9 +67,31 @@ type GarageClusterSpec struct {
 	// +optional
 	Resources *corev1.ResourceRequirements `json:"resources,omitempty"`
 
+	// Image configuration for Garage container
+	// +optional
+	Image *ImageConfig `json:"image,omitempty"`
+
 	// Layout configuration for zone assignment
 	// +optional
 	Layout *LayoutConfig `json:"layout,omitempty"`
+}
+
+// ImageConfig defines container image configuration
+type ImageConfig struct {
+	// Repository is the container image repository
+	// +kubebuilder:default="dxflrs/garage"
+	// +optional
+	Repository string `json:"repository,omitempty"`
+
+	// Tag is the container image tag
+	// +kubebuilder:validation:Required
+	Tag string `json:"tag"`
+
+	// PullPolicy is the image pull policy
+	// +kubebuilder:validation:Enum=Always;Never;IfNotPresent
+	// +kubebuilder:default=IfNotPresent
+	// +optional
+	PullPolicy corev1.PullPolicy `json:"pullPolicy,omitempty"`
 }
 
 // LayoutConfig defines layout zone assignment strategy
