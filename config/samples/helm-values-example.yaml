@@ -147,6 +147,12 @@ prometheus:
     # Target relabelings
     targetLabels: []
 
+# [WEBHOOKS]: Validating/Mutating Webhooks
+webhook:
+  # Enable webhooks (currently not implemented in the operator)
+  # Set to false to skip webhook deployment
+  enable: false
+
 # [CERT-MANAGER]: Cert-Manager Integration
 certmanager:
   # Enable cert-manager for webhook certificates
