@@ -12,6 +12,9 @@ permissions:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  # Set to 'linux/amd64,linux/arm64' to enable multi-arch builds
+  # arm64 builds take ~30min due to QEMU emulation
+  DOCKER_PLATFORMS: linux/amd64
 
 jobs:
   release:
@@ -59,7 +62,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.DOCKER_PLATFORMS }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
