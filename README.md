@@ -901,15 +901,12 @@ helm lint dist/chart
 
 ## Contributing
 
-// TODO(user): Add detailed information on how you would like others to contribute to this project
-
-**NOTE:** Run `make help` for more information on all potential `make` targets
-
-More information can be found via the [Kubebuilder Documentation](https://book.kubebuilder.io/introduction.html)
+Contributions are welcome! Feel free to open issues for bug reports or
+feature requests, and submit pull requests for improvements.
 
 ## License
 
-Copyright 2025.
+Copyright 2025 dimedis GmbH, Cologne.
 
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
