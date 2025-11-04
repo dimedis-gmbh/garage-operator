@@ -1,0 +1,124 @@
+name: Build Latest
+
+on:
+  workflow_dispatch:  # Manual trigger only
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  DOCKER_PLATFORMS: linux/amd64
+
+jobs:
+  build-latest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+
+      - name: Get commit SHA
+        id: sha
+        run: echo "short=$(git rev-parse --short HEAD)" >> $GITHUB_OUTPUT
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract metadata for Docker
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=raw,value=latest
+            type=raw,value=main-${{ steps.sha.outputs.short }}
+            type=sha,prefix=main-
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: ${{ env.DOCKER_PLATFORMS }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Install dependencies
+        run: |
+          make kustomize
+          make controller-gen
+
+      - name: Generate manifests
+        run: make manifests
+
+      - name: Generate Helm Chart
+        run: make generate-helm-chart
+
+      - name: Build Kustomize installer
+        env:
+          IMG: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest
+        run: |
+          make build-installer
+          cp dist/install.yaml dist/install-latest.yaml
+
+      - name: Update Helm Chart for latest
+        run: |
+          REPO=${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          yq eval -i ".controllerManager.container.image.repository = \"${REPO}\"" dist/chart/values.yaml
+          yq eval -i ".controllerManager.container.image.tag = \"latest\"" dist/chart/values.yaml
+          # Set chart version to 0.0.0-latest for development
+          sed -i "s/^version: .*/version: 0.0.0-latest/" dist/chart/Chart.yaml
+          sed -i "s/^appVersion: .*/appVersion: \"latest\"/" dist/chart/Chart.yaml
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+
+      - name: Package Helm Chart
+        run: |
+          helm package dist/chart -d dist/
+          mv dist/garage-operator-*.tgz dist/garage-operator-latest.tgz
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: latest-build-artifacts
+          path: |
+            dist/install-latest.yaml
+            dist/garage-operator-latest.tgz
+          retention-days: 30
+
+      - name: Summary
+        run: |
+          echo "## Latest Build Complete! :rocket:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Docker Images:**" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:latest\`" >> $GITHUB_STEP_SUMMARY
+          echo "- \`${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main-${{ steps.sha.outputs.short }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Artifacts:** Available in the 'Artifacts' section above" >> $GITHUB_STEP_SUMMARY
+          echo "- \`install-latest.yaml\` - Kustomize installation manifest" >> $GITHUB_STEP_SUMMARY
+          echo "- \`garage-operator-latest.tgz\` - Helm chart" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Installation:**" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`bash" >> $GITHUB_STEP_SUMMARY
+          echo "# Download artifacts and install with:" >> $GITHUB_STEP_SUMMARY
+          echo "kubectl apply -f install-latest.yaml" >> $GITHUB_STEP_SUMMARY
+          echo "# or" >> $GITHUB_STEP_SUMMARY
+          echo "helm install garage-operator garage-operator-latest.tgz" >> $GITHUB_STEP_SUMMARY
+          echo "\`\`\`" >> $GITHUB_STEP_SUMMARY
