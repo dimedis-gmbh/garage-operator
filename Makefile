@@ -157,6 +157,46 @@ build-chart: ## Package Helm chart
 	@command -v helm >/dev/null 2>&1 || { echo "Helm is not installed. Please install Helm."; exit 1; }
 	helm package dist/chart -d dist/
 
+.PHONY: generate-helm-chart
+generate-helm-chart: manifests kustomize ## Generate Helm chart from config
+	@echo "==> Generating Helm chart templates in dist/chart/..."
+	@mkdir -p dist/chart/templates dist/chart/crds
+	@# Generate Chart.yaml
+	@echo "apiVersion: v2" > dist/chart/Chart.yaml
+	@echo "name: garage-operator" >> dist/chart/Chart.yaml
+	@echo "description: Kubernetes operator for Garage object storage" >> dist/chart/Chart.yaml
+	@echo "type: application" >> dist/chart/Chart.yaml
+	@echo "version: 0.1.0" >> dist/chart/Chart.yaml
+	@echo "appVersion: \"0.1.0\"" >> dist/chart/Chart.yaml
+	@# Generate values.yaml with templating support
+	@echo "# Default values for garage-operator" > dist/chart/values.yaml
+	@echo "replicaCount: 1" >> dist/chart/values.yaml
+	@echo "" >> dist/chart/values.yaml
+	@echo "controllerManager:" >> dist/chart/values.yaml
+	@echo "  replicas: 1" >> dist/chart/values.yaml
+	@echo "  container:" >> dist/chart/values.yaml
+	@echo "    image:" >> dist/chart/values.yaml
+	@echo "      repository: controller" >> dist/chart/values.yaml
+	@echo "      tag: latest" >> dist/chart/values.yaml
+	@echo "      pullPolicy: IfNotPresent" >> dist/chart/values.yaml
+	@echo "" >> dist/chart/values.yaml
+	@echo "webhook:" >> dist/chart/values.yaml
+	@echo "  enable: false" >> dist/chart/values.yaml
+	@echo "" >> dist/chart/values.yaml
+	@echo "metricsService:" >> dist/chart/values.yaml
+	@echo "  enable: true" >> dist/chart/values.yaml
+	@echo "  type: ClusterIP" >> dist/chart/values.yaml
+	@echo "  ports:" >> dist/chart/values.yaml
+	@echo "    - name: https" >> dist/chart/values.yaml
+	@echo "      port: 8443" >> dist/chart/values.yaml
+	@echo "      protocol: TCP" >> dist/chart/values.yaml
+	@echo "      targetPort: 8443" >> dist/chart/values.yaml
+	@# Copy CRDs
+	@cp config/crd/bases/*.yaml dist/chart/crds/ 2>/dev/null || true
+	@# Generate main manifests from kustomize
+	@$(KUSTOMIZE) build config/default > dist/chart/templates/manifests.yaml
+	@echo "==> Helm chart generated in dist/chart/"
+
 .PHONY: release-prepare
 release-prepare: ## Prepare release artifacts locally (for testing)
 	@echo "==> Preparing release artifacts..."
