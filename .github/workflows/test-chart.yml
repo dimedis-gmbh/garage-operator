@@ -42,9 +42,11 @@ jobs:
       - name: Verify Helm installation
         run: helm version
 
+      - name: Generate Helm Chart
+        run: make generate-helm-chart
+
       - name: Lint Helm Chart
-        run: |
-          helm lint ./dist/chart
+        run: helm lint ./dist/chart
 
       # TODO: Uncomment if cert-manager is enabled
       #      - name: Install cert-manager via Helm
