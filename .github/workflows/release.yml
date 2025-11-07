@@ -115,40 +115,59 @@ jobs:
           cat > release-notes.md << 'EOF'
           ## Installation
 
-          ### Using Kustomize
+          ### Using Kustomize (Recommended)
 
           Install the operator with a single command:
 
-          \`\`\`bash
+          ```bash
           kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/install.yaml
-          \`\`\`
+          ```
 
           Or use the versioned file:
 
-          \`\`\`bash
+          ```bash
           kubectl apply -f https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/install-${{ steps.version.outputs.version }}.yaml
-          \`\`\`
+          ```
 
           ### Using Helm
 
-          \`\`\`bash
+          **Important:** CRDs must be installed separately before installing the Helm chart.
+
+          ```bash
+          # Download and extract the Helm chart
+          curl -L https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/garage-operator-${{ steps.version.outputs.version_no_v }}.tgz -o garage-operator.tgz
+          tar -xzf garage-operator.tgz
+
+          # Install CRDs first
+          kubectl apply -f garage-operator/crds/
+
+          # Install the Helm chart
+          helm install garage-operator ./garage-operator \
+            --namespace garage-operator-system \
+            --create-namespace
+          ```
+
+          Or install CRDs from source:
+
+          ```bash
+          # Install CRDs
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ steps.version.outputs.version }}/config/crd/bases/garage.dimedis.io_garageclusters.yaml
+          kubectl apply -f https://raw.githubusercontent.com/${{ github.repository }}/${{ steps.version.outputs.version }}/config/crd/bases/garage.dimedis.io_garagebuckets.yaml
+
+          # Install the chart
           helm install garage-operator \
-            https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/garage-operator-${{ steps.version.outputs.version_no_v }}.tgz
-          \`\`\`
+            https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}/garage-operator-${{ steps.version.outputs.version_no_v }}.tgz \
+            --namespace garage-operator-system \
+            --create-namespace
+          ```
 
-          Or add the repository:
-
-          \`\`\`bash
-          helm repo add garage-operator https://github.com/${{ github.repository }}/releases/download/${{ steps.version.outputs.version }}
-          helm repo update
-          helm install garage-operator garage-operator/garage-operator --version ${{ steps.version.outputs.version_no_v }}
-          \`\`\`
+          See [Helm Installation Guide](https://github.com/${{ github.repository }}/blob/${{ steps.version.outputs.version }}/docs/HELM_INSTALLATION.md) for detailed instructions.
 
           ### Docker Image
 
-          \`\`\`
+          ```
           ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.version.outputs.version }}
-          \`\`\`
+          ```
 
           Available platforms: `linux/amd64`, `linux/arm64`
 
