@@ -96,11 +96,36 @@ kubectl apply -f https://github.com/dimedis-gmbh/garage-operator/releases/downlo
 
 ### Using Helm
 
+**Important:** CRDs must be installed separately before installing the Helm chart.
+
 **Direct chart URL:**
 
 ```bash
+# Install CRDs first
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garageclusters.yaml
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garagebuckets.yaml
+
+# Then install the chart
 helm install garage-operator \
-  https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz
+  https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz \
+  --namespace garage-operator-system \
+  --create-namespace
+```
+
+**Using chart from release archive:**
+
+```bash
+# Download and extract
+curl -L https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz -o garage-operator.tgz
+tar -xzf garage-operator.tgz
+
+# Install CRDs (included in chart's crds/ directory)
+kubectl apply -f garage-operator/crds/
+
+# Install chart
+helm install garage-operator ./garage-operator \
+  --namespace garage-operator-system \
+  --create-namespace
 ```
 
 **Using Helm repository:**
@@ -119,12 +144,25 @@ helm install garage-operator garage-operator/garage-operator --version 1.0.0
 **With custom values:**
 
 ```bash
+# Install CRDs first
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garageclusters.yaml
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garagebuckets.yaml
+
+# Install with custom values
 helm install garage-operator \
   https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz \
   --values custom-values.yaml \
   --namespace garage-operator-system \
   --create-namespace
 ```
+
+**Why are CRDs separate?**
+
+The Helm chart structure separates CRDs from the main release for several reasons:
+- CRDs are cluster-wide resources that should persist independently
+- They must exist before the operator starts
+- This prevents ownership conflicts and follows Kubernetes best practices
+- CRDs are located in the chart's `crds/` directory but not managed by Helm
 
 ## Docker Images
 
@@ -179,7 +217,14 @@ make release-prepare VERSION=v1.0.0
 kubectl apply -f dist/install.yaml --dry-run=client
 
 # Test Helm chart
-helm install garage-operator dist/garage-operator-1.0.0.tgz --dry-run --debug
+# First install CRDs
+kubectl apply -f dist/chart/crds/
+
+# Then test the chart
+helm install garage-operator dist/chart \
+  --namespace garage-operator-system \
+  --create-namespace \
+  --dry-run --debug
 ```
 
 Or use the test script:
@@ -187,6 +232,20 @@ Or use the test script:
 ```bash
 ./hack/test-release.sh v1.0.0
 ```
+
+**Helm Chart Generation Details:**
+
+The `make generate-helm-chart` target:
+1. Generates CRDs using controller-gen and places them in `dist/chart/crds/`
+2. Builds manifests using kustomize from `config/default`
+3. Filters out CRDs and Namespace from templates (they're handled separately)
+4. Creates Chart.yaml and values.yaml with default configuration
+
+This ensures:
+- CRDs are available in the `crds/` directory for manual installation
+- Templates only contain operator resources (Deployment, RBAC, Service, etc.)
+- The namespace is created by Helm's `--create-namespace` flag
+- No Helm ownership conflicts with CRDs
 
 ## Troubleshooting
 

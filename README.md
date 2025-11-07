@@ -837,11 +837,34 @@ kubectl apply -f https://github.com/dimedis-gmbh/garage-operator/releases/downlo
 
 The Helm chart is automatically generated and packaged with each release.
 
-**Install from release:**
+**Important:** CRDs are managed separately from the Helm release. You need to install them first:
 
 ```sh
+# Download and extract the Helm chart
+curl -L https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz -o garage-operator.tgz
+tar -xzf garage-operator.tgz
+
+# Install CRDs first
+kubectl apply -f garage-operator/crds/
+
+# Then install the Helm chart
+helm install garage-operator ./garage-operator \
+  --namespace garage-operator-system \
+  --create-namespace
+```
+
+**Or install directly from release URL:**
+
+```sh
+# Install CRDs first
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garageclusters.yaml
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garagebuckets.yaml
+
+# Then install the chart
 helm install garage-operator \
-  https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz
+  https://github.com/dimedis-gmbh/garage-operator/releases/download/v1.0.0/garage-operator-1.0.0.tgz \
+  --namespace garage-operator-system \
+  --create-namespace
 ```
 
 **Or use as Helm repository:**
@@ -855,6 +878,10 @@ helm install garage-operator garage-operator/garage-operator --version 1.0.0
 **With custom configuration:**
 
 ```sh
+# Install CRDs first
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garageclusters.yaml
+kubectl apply -f https://raw.githubusercontent.com/dimedis-gmbh/garage-operator/v1.0.0/config/crd/bases/garage.dimedis.io_garagebuckets.yaml
+
 # Create custom values
 cat > my-values.yaml <<EOF
 controllerManager:
@@ -874,30 +901,66 @@ helm install garage-operator \
   --create-namespace
 ```
 
+**Why are CRDs installed separately?**
+
+CRDs (Custom Resource Definitions) are cluster-wide resources that define the schema for GarageCluster and GarageBucket resources. They are intentionally kept separate from the Helm release because:
+
+- CRDs often need to exist before the operator starts
+- They should persist even if the Helm release is uninstalled
+- This follows Kubernetes best practices for operator installations
+
 **NOTE:** The chart is automatically updated with each release. Check the
 `dist/chart/values.yaml` file for all available configuration options.
 
 ### Building Charts Locally
 
-1. Update chart version and dependencies:
+The Helm chart is generated from Kustomize manifests with CRDs separated:
+
+1. Generate the Helm chart:
 
 ```sh
-# Update Chart.yaml with new version
-vim dist/chart/Chart.yaml
+# Generate chart from kustomize manifests
+make generate-helm-chart
 
-# Package the chart
-make build-chart
+# This creates dist/chart/ with:
+# - Chart.yaml (chart metadata)
+# - values.yaml (default configuration)
+# - templates/manifests.yaml (operator resources, excluding CRDs and namespace)
+# - crds/ (CustomResourceDefinitions for separate installation)
 ```
 
-2. Test the chart before releasing:
+2. Test the chart:
 
 ```sh
-# Dry-run installation
-helm install garage-operator dist/chart --dry-run --debug
+# Install CRDs first (required)
+kubectl apply -f dist/chart/crds/
+
+# Test installation with dry-run
+helm install garage-operator dist/chart \
+  --namespace garage-operator-system \
+  --create-namespace \
+  --dry-run --debug
 
 # Lint the chart
 helm lint dist/chart
 ```
+
+3. Package the chart for distribution:
+
+```sh
+# Package into .tgz file
+make build-chart
+
+# Creates: dist/garage-operator-<version>.tgz
+```
+
+**Chart Structure:**
+
+The generated Helm chart follows best practices:
+- **CRDs** are in the `crds/` directory for separate installation
+- **Namespace** is created by Helm with `--create-namespace` flag
+- **Templates** contain all operator resources (Deployment, RBAC, Service, etc.)
+- This structure allows CRDs to be managed independently from the operator lifecycle
 
 ## Contributing
 
