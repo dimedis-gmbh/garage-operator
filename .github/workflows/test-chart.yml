@@ -78,6 +78,11 @@ jobs:
       #        run: |
       #          kubectl wait --namespace monitoring --for=condition=available --timeout=300s deployment/prometheus-server
 
+      - name: Clean up any existing CRDs
+        run: |
+          kubectl delete crd garagebuckets.garage.dimedis.io --ignore-not-found=true
+          kubectl delete crd garageclusters.garage.dimedis.io --ignore-not-found=true
+
       - name: Install Helm chart for project
         run: |
           helm install my-release ./dist/chart --create-namespace --namespace garage-operator-system
