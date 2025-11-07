@@ -29,6 +29,18 @@ jobs:
       - name: Create kind cluster
         run: kind create cluster
 
+      - name: Install kubectl
+        run: |
+          if ! command -v kubectl &> /dev/null; then
+            echo "kubectl not found, installing..."
+            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
+            chmod +x kubectl
+            sudo mv kubectl /usr/local/bin/
+          else
+            echo "kubectl already installed"
+          fi
+          kubectl version --client
+
       - name: Prepare garage-operator
         run: |
           go mod tidy
@@ -78,10 +90,9 @@ jobs:
       #        run: |
       #          kubectl wait --namespace monitoring --for=condition=available --timeout=300s deployment/prometheus-server
 
-      - name: Clean up any existing CRDs
+      - name: Install CRDs separately (they are in crds/ folder, not managed by Helm)
         run: |
-          kubectl delete crd garagebuckets.garage.dimedis.io --ignore-not-found=true
-          kubectl delete crd garageclusters.garage.dimedis.io --ignore-not-found=true
+          kubectl apply -f dist/chart/crds/
 
       - name: Install Helm chart for project
         run: |

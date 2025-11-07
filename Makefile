@@ -191,10 +191,14 @@ generate-helm-chart: manifests kustomize ## Generate Helm chart from config
 	@echo "      port: 8443" >> dist/chart/values.yaml
 	@echo "      protocol: TCP" >> dist/chart/values.yaml
 	@echo "      targetPort: 8443" >> dist/chart/values.yaml
-	@# Copy CRDs
+	@# Copy CRDs to crds directory
 	@cp config/crd/bases/*.yaml dist/chart/crds/ 2>/dev/null || true
-	@# Generate main manifests from kustomize
-	@$(KUSTOMIZE) build config/default > dist/chart/templates/manifests.yaml
+	@# Generate main manifests from kustomize, excluding CRDs (they're in crds/ folder)
+	@$(KUSTOMIZE) build config/default > dist/chart/templates/manifests-full.yaml
+	@# Use awk to split by --- and exclude CustomResourceDefinition and Namespace documents
+	@# (Namespace will be created by Helm with --create-namespace flag)
+	@awk 'BEGIN {RS="---\n"; ORS=""} {if ($$0 !~ /kind: CustomResourceDefinition/ && $$0 !~ /kind: Namespace/) print "---\n" $$0}' dist/chart/templates/manifests-full.yaml | tail -n +2 > dist/chart/templates/manifests.yaml
+	@rm -f dist/chart/templates/manifests-full.yaml
 	@echo "==> Helm chart generated in dist/chart/"
 
 .PHONY: release-prepare
